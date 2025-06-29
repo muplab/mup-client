@@ -1,6 +1,6 @@
 {
   "name": "@muprotocol/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Core implementation of MUP (Model UI Protocol)",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
@@ -16,7 +16,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@muprotocol/types": "^0.1.1",
+    "@muprotocol/types": "^0.1.2",
     "uuid": "^9.0.0",
     "ws": "^8.14.0"
   },

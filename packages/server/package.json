@@ -1,6 +1,6 @@
 {
   "name": "@muprotocol/server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MUP (Model UI Protocol) server SDK for creating MUP-compatible servers",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
@@ -16,8 +16,8 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@muprotocol/core": "^0.1.1",
-    "@muprotocol/types": "^0.1.1",
+    "@muprotocol/core": "^0.1.2",
+    "@muprotocol/types": "^0.1.2",
     "ws": "^8.0.0"
   },
   "devDependencies": {
