@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+lib/
+*.d.ts
+*.d.ts.map
+*.js.map
+
+# Package build artifacts
+packages/*/dist/
+packages/*/build/
+packages/*/lib/
+packages/*/*.d.ts
+packages/*/*.d.ts.map
+packages/*/*.js.map
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Generated files
+lerna-debug.log*
+*.tsbuildinfo
+
+# Documentation
+*.md

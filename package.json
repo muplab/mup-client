@@ -1,0 +1,52 @@
+{
+  "name": "mup-sdk",
+  "version": "0.1.0",
+  "description": "Model UI Protocol (MUP) SDK - Core implementation and packages",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "lint": "eslint packages/*/src/**/*.ts",
+    "clean": "lerna run clean",
+    "bootstrap": "lerna bootstrap",
+    "publish": "lerna publish",
+    "dev": "lerna run dev --parallel"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "@types/jest": "^29.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.0.0",
+    "jest": "^29.0.0",
+    "lerna": "^7.0.0",
+    "rollup": "^3.0.0",
+    "rollup-plugin-dts": "^5.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mup",
+    "model-ui-protocol",
+    "ai",
+    "ui",
+    "dynamic-ui",
+    "websocket",
+    "typescript"
+  ],
+  "author": "MUP Foundation",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/muplab/mup-sdk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/muplab/mup-sdk/issues"
+  },
+  "homepage": "https://github.com/muplab/mup-sdk#readme"
+}

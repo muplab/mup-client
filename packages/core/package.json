@@ -1,0 +1,44 @@
+{
+  "name": "@muprotocol/core",
+  "version": "0.1.1",
+  "description": "Core implementation of MUP (Model UI Protocol)",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "jest --passWithNoTests",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@muprotocol/types": "^0.1.1",
+    "uuid": "^9.0.0",
+    "ws": "^8.14.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "@types/uuid": "^9.0.0",
+    "@types/ws": "^8.5.0",
+    "rollup": "^3.0.0",
+    "rollup-plugin-dts": "^5.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mup",
+    "core",
+    "websocket",
+    "model-ui-protocol"
+  ],
+  "author": "MUP Foundation",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

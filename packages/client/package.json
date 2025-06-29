@@ -1,0 +1,43 @@
+{
+  "name": "@muprotocol/client",
+  "version": "0.1.1",
+  "description": "MUP (Model UI Protocol) client SDK for connecting to MUP servers",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "jest --passWithNoTests",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "@muprotocol/core": "^0.1.1",
+    "@muprotocol/types": "^0.1.1"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "rollup": "^3.0.0",
+    "rollup-plugin-dts": "^5.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": [
+    "mup",
+    "client",
+    "websocket",
+    "model-ui-protocol",
+    "ui",
+    "dynamic-ui"
+  ],
+  "author": "MUP Foundation",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
