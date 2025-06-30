@@ -44,7 +44,7 @@ export interface ClientEvents {
   connected: () => void;
   disconnected: (reason?: string) => void;
   error: (error: Error) => void;
-  message: (message: UIResponse | EventTrigger | ErrorMessage) => void;
+  message: (message: UIResponse | EventTrigger | ErrorMessage | UIRequest) => void;
   ui_response: (response: UIResponse) => void;
   event_trigger: (event: EventTrigger) => void;
   error_message: (error: ErrorMessage) => void;
@@ -344,8 +344,13 @@ export class MUPClient extends EventEmitter<ClientEvents> {
     
     this.heartbeatTimer = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        // Send ping frame or heartbeat message
-        this.ws.ping?.();
+        // Send heartbeat message (ping is not available in browser WebSocket)
+        // Use a simple heartbeat message instead
+        try {
+          this.ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+        } catch (error) {
+          console.warn('Failed to send heartbeat:', error);
+        }
       }
     }, this.config.heartbeatInterval);
   }

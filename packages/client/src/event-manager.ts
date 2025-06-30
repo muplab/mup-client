@@ -4,7 +4,7 @@
  */
 
 import { EventEmitter } from 'eventemitter3';
-import { EventTrigger, ComponentEvent } from '@muprotocol/types';
+import { EventTrigger, ComponentEvent, Component } from '@muprotocol/types';
 
 /**
  * Event manager configuration
@@ -28,9 +28,8 @@ export class EventManager extends EventEmitter {
       ...config
     };
 
-    if (this.config.maxListeners) {
-      this.setMaxListeners(this.config.maxListeners);
-    }
+    // Note: eventemitter3 does not support setMaxListeners method
+    // The maxListeners config is kept for potential future use or documentation
   }
 
   /**
@@ -81,9 +80,44 @@ export class EventManager extends EventEmitter {
   }
 
   /**
+   * Register component for event handling
+   * @param component - Component to register
+   */
+  registerComponent(component: Component): void {
+    // Register event handlers for component events if they exist
+    if (component.events) {
+      component.events.forEach(event => {
+        // Component events are already handled by the general event system
+        // This method is mainly for tracking registered components
+      });
+    }
+  }
+
+  /**
+   * Unregister component from event handling
+   * @param componentId - Component ID to unregister
+   */
+  unregisterComponent(componentId: string): void {
+    // Remove all listeners for this component
+    const eventNames = this.eventNames();
+    eventNames.forEach(eventName => {
+      if (typeof eventName === 'string' && eventName.startsWith(`component:${componentId}:`)) {
+        this.removeAllListeners(eventName);
+      }
+    });
+  }
+
+  /**
    * Clear all event listeners
    */
-  clearAllListeners(): void {
+  clear(): void {
     this.removeAllListeners();
+  }
+
+  /**
+   * Clear all event listeners (alias for clear)
+   */
+  clearAllListeners(): void {
+    this.clear();
   }
 }

@@ -32,7 +32,7 @@ export interface AppState {
 export interface StateChangeEvent {
   type: 'component_added' | 'component_updated' | 'component_removed' | 'tree_updated' | 'metadata_updated';
   componentId?: string;
-  component?: Component;
+  component?: Component | undefined;
   tree?: ComponentTree;
   metadata?: Record<string, any>;
   previousState: AppState;
@@ -136,7 +136,7 @@ export class StateManager extends EventEmitter {
     const event: StateChangeEvent = {
       type: 'component_removed',
       componentId,
-      component,
+      component: component || undefined,
       previousState,
       currentState: this.getState()
     };
