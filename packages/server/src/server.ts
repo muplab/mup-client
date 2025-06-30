@@ -10,6 +10,7 @@ import {
   MUPMessage,
   UIRequest,
   UIResponse,
+  UIResponsePayload,
   EventTrigger,
   ErrorMessage,
   MessageType
@@ -194,7 +195,7 @@ export class MUPServer extends EventEmitter<ServerEvents> {
     }
 
     try {
-      const serialized = MessageParser.serialize(message);
+      const serialized = MessageParser.serialize(message as UIRequest | EventTrigger | UIResponse | ErrorMessage);
       client.socket.send(serialized);
       this.emit('message:sent', clientId, message);
       return true;
@@ -231,12 +232,9 @@ export class MUPServer extends EventEmitter<ServerEvents> {
   sendUIResponse(
     clientId: string,
     requestId: string,
-    response: Omit<UIResponse, 'id' | 'type' | 'timestamp'>
+    response: UIResponsePayload
   ): boolean {
-    const message = MessageBuilder.createUIResponse({
-      ...response,
-      requestId
-    });
+    const message = MessageBuilder.createUIResponse(response, requestId);
     
     return this.sendToClient(clientId, message);
   }
@@ -253,10 +251,7 @@ export class MUPServer extends EventEmitter<ServerEvents> {
     error: { code: string; message: string; details?: any },
     requestId?: string
   ): boolean {
-    const message = MessageBuilder.createError({
-      ...error,
-      requestId
-    });
+    const message = MessageBuilder.createError(error, requestId);
     
     return this.sendToClient(clientId, message);
   }
@@ -394,12 +389,13 @@ export class MUPServer extends EventEmitter<ServerEvents> {
       
       // Validate message if enabled
       if (this.config.enableValidation) {
-        const validation = this.validator.validateMessage(message);
-        if (!validation.isValid) {
+        try {
+          MUPValidator.validateMessage(message);
+        } catch (error) {
           this.sendError(clientId, {
             code: 'VALIDATION_ERROR',
             message: 'Invalid message format',
-            details: validation.errors
+            details: (error as Error).message
           });
           return;
         }
@@ -409,11 +405,11 @@ export class MUPServer extends EventEmitter<ServerEvents> {
 
       // Handle different message types
       switch (message.type) {
-        case MessageType.UI_REQUEST:
+        case 'ui_request':
           await this.handleUIRequest(clientId, message as UIRequest);
           break;
           
-        case MessageType.EVENT_TRIGGER:
+        case 'event_trigger':
           await this.handleEventTrigger(clientId, message as EventTrigger);
           break;
           
@@ -471,7 +467,7 @@ export class MUPServer extends EventEmitter<ServerEvents> {
   private async handleEventTrigger(clientId: string, event: EventTrigger): Promise<void> {
     this.emit('event:trigger', clientId, event);
     
-    const handler = this.eventHandlers.get(event.payload.eventType);
+    const handler = this.eventHandlers.get(event.payload.event_type);
     if (!handler) {
       // Events don't require responses, so we just ignore unknown events
       return;

@@ -130,14 +130,16 @@ export class SessionManager extends EventEmitter<SessionManagerEvents> {
       // Remove oldest session
       const oldestSession = existingSessions
         .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt)[0];
-      await this.destroySession(oldestSession.id);
+      if (oldestSession) {
+        await this.destroySession(oldestSession.id);
+      }
     }
 
     const now = Date.now();
     const session: SessionData = {
       id: uuidv4(),
       clientId,
-      userId,
+      ...(userId && { userId }),
       createdAt: now,
       lastAccessedAt: now,
       expiresAt: now + this.config.ttl,

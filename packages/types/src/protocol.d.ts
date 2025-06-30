@@ -13,6 +13,9 @@ export interface MUPMessage<T = any> {
     payload: T;
 }
 export interface UIRequestPayload {
+    action: string;
+    method?: string;
+    query?: string;
     user_input: string;
     context?: {
         previous_components?: Component[];
@@ -48,6 +51,7 @@ export interface ErrorPayload {
 }
 export interface UIRequest extends MUPMessage<UIRequestPayload> {
     type: 'ui_request';
+    id: string;
 }
 export interface UIResponse extends MUPMessage<UIResponsePayload> {
     type: 'ui_response';

@@ -190,13 +190,13 @@ export class MUPRouter {
     const match = this.findRoute(action, request.payload.method);
     
     if (!match) {
-      return MessageBuilder.createErrorResponse({
-        requestId: request.id,
-        error: {
+      return MessageBuilder.createErrorResponse(
+        {
           code: 'ROUTE_NOT_FOUND',
           message: `No route found for action: ${action}`
-        }
-      });
+        },
+        request.id
+      );
     }
 
     // Create route context
@@ -227,14 +227,14 @@ export class MUPRouter {
         console.error(`[Router] Error handling request: ${action}`, error);
       }
       
-      return MessageBuilder.createErrorResponse({
-        requestId: request.id,
-        error: {
+      return MessageBuilder.createErrorResponse(
+        {
           code: 'HANDLER_ERROR',
           message: 'Request handler failed',
           details: (error as Error).message
-        }
-      });
+        },
+        request.id
+      );
     }
   }
 
@@ -303,7 +303,11 @@ export class MUPRouter {
     // Extract parameters
     const params: Record<string, string> = {};
     for (let i = 0; i < paramNames.length; i++) {
-      params[paramNames[i]] = match[i + 1];
+      const paramName = paramNames[i];
+      const paramValue = match[i + 1];
+      if (paramName && paramValue) {
+        params[paramName] = paramValue;
+      }
     }
     
     return params;
@@ -319,13 +323,15 @@ export class MUPRouter {
     
     let index = 0;
     
-    const next = async (): Promise<void> => {
+    const next: () => Promise<void> = async (): Promise<void> => {
       if (index >= middleware.length) {
         return;
       }
       
       const currentMiddleware = middleware[index++];
-      await currentMiddleware(context, next);
+      if (currentMiddleware) {
+        await currentMiddleware(context, next);
+      }
     };
     
     await next();

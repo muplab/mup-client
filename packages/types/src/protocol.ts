@@ -26,6 +26,9 @@ export interface MUPMessage<T = any> {
 
 // UI request payload
 export interface UIRequestPayload {
+  action: string;                      // Action to perform
+  method?: string;                     // HTTP method (GET, POST, etc.)
+  query?: string;                      // Query parameters
   user_input: string;                  // User requirement description
   context?: {
     previous_components?: Component[]; // Previous components
@@ -69,6 +72,7 @@ export interface ErrorPayload {
 // Specific message types
 export interface UIRequest extends MUPMessage<UIRequestPayload> {
   type: 'ui_request';
+  id: string;                          // Request ID for correlation
 }
 
 export interface UIResponse extends MUPMessage<UIResponsePayload> {
