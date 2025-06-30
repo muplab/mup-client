@@ -239,6 +239,8 @@ export class MUPClient {
           this.isConnected = true;
           this.reconnectAttempts = 0;
           this.eventManager.emit('connected');
+          // Send initial UI request
+          this.sendUIRequest();
           resolve();
         };
 
@@ -292,8 +294,16 @@ export class MUPClient {
     console.log('Received message:', message);
 
     switch (message.type) {
-      case 'handshake_response':
-        console.log('Handshake completed');
+      case 'ui_response':
+        if (message.components && Array.isArray(message.components)) {
+          message.components.forEach(component => {
+            this.updateComponent(component);
+          });
+        }
+        break;
+
+      case 'event_trigger':
+        this.eventManager.emit('event_trigger', message);
         break;
 
       case 'component_update':
@@ -313,6 +323,22 @@ export class MUPClient {
     }
   }
 
+  sendUIRequest() {
+    if (!this.isConnected || !this.ws) {
+      console.warn('Cannot send UI request: not connected');
+      return;
+    }
+
+    const message = {
+      type: 'ui_request',
+      request_id: Date.now().toString(),
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('Sending UI request:', message);
+    this.ws.send(JSON.stringify(message));
+  }
+
   sendEvent(componentId, eventType, data) {
     if (!this.isConnected || !this.ws) {
       console.warn('Cannot send event: not connected');
@@ -320,15 +346,20 @@ export class MUPClient {
     }
 
     const message = {
-      type: 'client_event',
+      type: 'event_trigger',
       component_id: componentId,
       event_type: eventType,
       event_data: data,
       timestamp: new Date().toISOString()
     };
 
-    console.log('Sending event:', message);
+    console.log('Sending event trigger:', message);
     this.ws.send(JSON.stringify(message));
+  }
+
+  updateComponent(component) {
+    this.stateManager.updateComponent(component);
+    this.eventManager.emit('component_update', component);
   }
 
   renderComponent(component, container) {

@@ -1,48 +1,25 @@
-import typescript from '@rollup/plugin-typescript';
-import { dts } from 'rollup-plugin-dts';
+const typescript = require('rollup-plugin-typescript2');
 
-const config = [
-  // ES modules build
-  {
-    input: 'src/index.ts',
-    output: {
-      file: 'dist/index.esm.js',
-      format: 'es',
-      sourcemap: true
-    },
-    plugins: [
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: false
-      })
-    ],
-    external: []
-  },
-  // CommonJS build
-  {
-    input: 'src/index.ts',
-    output: {
+module.exports = {
+  input: 'src/index.ts',
+  output: [
+    {
       file: 'dist/index.js',
       format: 'cjs',
       sourcemap: true
     },
-    plugins: [
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: false
-      })
-    ],
-    external: []
-  },
-  // Type definitions
-  {
-    input: 'src/index.ts',
-    output: {
-      file: 'dist/index.d.ts',
-      format: 'es'
-    },
-    plugins: [dts()]
-  }
-];
-
-export default config;
+    {
+      file: 'dist/index.esm.js',
+      format: 'esm',
+      sourcemap: true
+    }
+  ],
+  plugins: [
+    typescript({
+      typescript: require('typescript'),
+      tsconfig: './tsconfig.json',
+      clean: true
+    })
+  ],
+  external: []
+};

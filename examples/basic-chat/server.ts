@@ -4,14 +4,7 @@ import { Component } from '@muprotocol/types';
 // Create server instance
 const server = new MUPServer({
   port: 3000,
-  path: '/mup',
-  capabilities: {
-    components: true,
-    events: true
-  },
-  auth: {
-    required: false // Simplified for demo
-  }
+  path: '/mup'
 });
 
 // Store chat messages
@@ -195,23 +188,22 @@ function createChatUI(): Component {
   };
 }
 
-// Handle client connections
-server.on('client_connected', (session) => {
-  console.log(`Client connected: ${session.id}`);
+// Handle UI requests
+server.on('ui_request', (session, request) => {
+  console.log(`UI request from ${session.id}:`, request);
   
   // Send initial chat UI
   const chatUI = createChatUI();
-  server.sendComponentUpdate(session.id, chatUI);
+  server.sendUIResponse(session.id, {
+    type: 'ui_response',
+    request_id: request.request_id,
+    components: [chatUI]
+  });
 });
 
-// Handle client disconnections
-server.on('client_disconnected', (session) => {
-  console.log(`Client disconnected: ${session.id}`);
-});
-
-// Handle client events
-server.on('client_event', (session, event) => {
-  console.log(`Received event from ${session.id}:`, event);
+// Handle event triggers
+server.on('event_trigger', (session, event) => {
+  console.log(`Event trigger from ${session.id}:`, event);
   
   if (event.component_id === 'input-form' && event.event_type === 'submit') {
     const formData = event.event_data as Record<string, string>;
@@ -236,7 +228,11 @@ server.on('client_event', (session, event) => {
       
       // Broadcast updated chat UI to all clients
       const updatedChatUI = createChatUI();
-      server.broadcastComponentUpdate(updatedChatUI);
+      server.broadcastUIResponse({
+        type: 'ui_response',
+        request_id: '',
+        components: [updatedChatUI]
+      });
       
       console.log(`New message from ${username}: ${messageText}`);
     }

@@ -1,40 +1,86 @@
-import {
-  ButtonProps,
-  ContainerProps,
-  FormProps,
-  InputProps,
-  MUPComponent,
-  TextProps
-} from '@muprotocol/types';
-import { MUPUtils } from '@muprotocol/core';
+/**
+ * MUP Component Renderer
+ * Renders MUP components to DOM elements for MUP protocol v1
+ */
 
-export interface RendererOptions {
-  enableEventHandlers?: boolean;
-  cssPrefix?: string;
-  customRenderers?: Record<string, ComponentRenderer>;
+import { Component, ComponentType, ComponentStyle } from '@muprotocol/types';
+import { EventManager } from './event-manager';
+
+/**
+ * Renderer configuration
+ */
+export interface RendererConfig {
+  container?: HTMLElement;        // Container element
+  theme?: 'light' | 'dark';      // Theme
+  customRenderers?: Map<ComponentType, ComponentRenderer>; // Custom renderers
+  eventManager?: EventManager;    // Event manager instance
 }
 
-export type ComponentRenderer = (component: MUPComponent, options: RendererOptions) => HTMLElement;
+/**
+ * Component renderer function
+ */
+export type ComponentRenderer = (
+  component: Component,
+  context: RenderContext
+) => HTMLElement;
 
-export class ComponentRenderer {
-  private options: Required<RendererOptions>;
-  private eventHandlers: Map<string, (event: Event) => void> = new Map();
+/**
+ * Render context
+ */
+export interface RenderContext {
+  renderer: MUPRenderer;
+  eventManager?: EventManager;
+  theme: 'light' | 'dark';
+  depth: number;
+}
 
-  constructor(options: RendererOptions = {}) {
-    this.options = {
-      enableEventHandlers: true,
-      cssPrefix: 'mup-',
-      customRenderers: {},
-      ...options
+/**
+ * MUP component renderer
+ */
+export class MUPRenderer {
+  private config: Required<RendererConfig>;
+  private renderers = new Map<ComponentType, ComponentRenderer>();
+  private renderedComponents = new Map<string, HTMLElement>();
+
+  constructor(config: RendererConfig = {}) {
+    this.config = {
+      container: config.container || document.body,
+      theme: config.theme || 'light',
+      customRenderers: config.customRenderers || new Map(),
+      eventManager: config.eventManager || new EventManager()
     };
+
+    this.initializeDefaultRenderers();
+    this.mergeCustomRenderers();
   }
 
   /**
-   * Render a component to HTML element
+   * Render a component tree
+   * @param component - Root component to render
+   * @param container - Optional container element
+   * @returns Rendered DOM element
    */
-  render(component: MUPComponent, container?: HTMLElement): HTMLElement {
-    const element = this.renderComponent(component);
+  render(component: Component, container?: HTMLElement): HTMLElement {
+    const targetContainer = container || this.config.container;
     
+    // Register component events
+    this.config.eventManager.registerComponent(component);
+    
+    // Create render context
+    const context: RenderContext = {
+      renderer: this,
+      eventManager: this.config.eventManager,
+      theme: this.config.theme,
+      depth: 0
+    };
+    
+    // Render component
+    const element = this.renderComponent(component, context);
+    
+    // Store rendered component
+    this.renderedComponents.set(component.id, element);
+    
+    // Append to container if provided
     if (container) {
       container.appendChild(element);
     }
@@ -43,460 +89,378 @@ export class ComponentRenderer {
   }
 
   /**
-   * Render a component based on its type
+   * Render multiple components
+   * @param components - Components to render
+   * @param container - Optional container element
+   * @returns Array of rendered DOM elements
    */
-  private renderComponent(component: MUPComponent): HTMLElement {
-    // Check for custom renderer first
-    if (this.options.customRenderers[component.type]) {
-      return this.options.customRenderers[component.type](component, this.options);
-    }
-
-    // Use built-in renderers
-    switch (component.type) {
-    case 'container':
-      return this.renderContainer(component);
-    case 'text':
-      return this.renderText(component);
-    case 'input':
-      return this.renderInput(component);
-    case 'button':
-      return this.renderButton(component);
-    case 'form':
-      return this.renderForm(component);
-    default:
-      console.warn(`Unknown component type: ${component.type}`);
-      return this.renderFallback(component);
-    }
+  renderComponents(components: Component[], container?: HTMLElement): HTMLElement[] {
+    return components.map(component => this.render(component, container));
   }
 
   /**
-   * Render a container component
+   * Update a rendered component
+   * @param componentId - Component ID to update
+   * @param newComponent - New component data
+   * @returns True if component was updated
    */
-  private renderContainer(component: MUPComponent): HTMLElement {
-    const props = component.props as ContainerProps;
-    const element = document.createElement('div');
+  updateComponent(componentId: string, newComponent: Component): boolean {
+    const existingElement = this.renderedComponents.get(componentId);
+    if (!existingElement || !existingElement.parentNode) {
+      return false;
+    }
+
+    // Create render context
+    const context: RenderContext = {
+      renderer: this,
+      eventManager: this.config.eventManager,
+      theme: this.config.theme,
+      depth: 0
+    };
+
+    // Render new component
+    const newElement = this.renderComponent(newComponent, context);
     
-    this.setBaseAttributes(element, component);
-    this.applyContainerStyles(element, props);
-    this.renderChildren(element, component.children);
+    // Replace existing element
+    existingElement.parentNode.replaceChild(newElement, existingElement);
     
-    return element;
+    // Update stored reference
+    this.renderedComponents.set(componentId, newElement);
+    
+    return true;
   }
 
   /**
-   * Render a text component
+   * Remove a rendered component
+   * @param componentId - Component ID to remove
+   * @returns True if component was removed
    */
-  private renderText(component: MUPComponent): HTMLElement {
-    const props = component.props as TextProps;
-    const tagName = this.getTextTagName(props.variant);
-    const element = document.createElement(tagName);
+  removeComponent(componentId: string): boolean {
+    const element = this.renderedComponents.get(componentId);
+    if (!element || !element.parentNode) {
+      return false;
+    }
+
+    // Remove from DOM
+    element.parentNode.removeChild(element);
     
-    this.setBaseAttributes(element, component);
-    element.textContent = props.content || '';
-    this.applyTextStyles(element, props);
+    // Remove from storage
+    this.renderedComponents.delete(componentId);
     
-    return element;
+    // Unregister events
+    this.config.eventManager.unregisterComponent(componentId);
+    
+    return true;
   }
 
   /**
-   * Render an input component
+   * Get rendered element for a component
+   * @param componentId - Component ID
+   * @returns DOM element or null
    */
-  private renderInput(component: MUPComponent): HTMLElement {
-    const props = component.props as InputProps;
-    const element = document.createElement('input');
-    
-    this.setBaseAttributes(element, component);
-    this.applyInputAttributes(element, props);
-    this.applyInputStyles(element, props);
-    this.attachInputEvents(element, component);
-    
-    return element;
+  getRenderedElement(componentId: string): HTMLElement | null {
+    return this.renderedComponents.get(componentId) || null;
   }
 
   /**
-   * Render a button component
+   * Clear all rendered components
    */
-  private renderButton(component: MUPComponent): HTMLElement {
-    const props = component.props as ButtonProps;
-    const element = document.createElement('button');
-    
-    this.setBaseAttributes(element, component);
-    element.textContent = props.text || '';
-    element.type = 'button';
-    
-    if (props.disabled) {
-      element.disabled = true;
-    }
-    
-    this.applyButtonStyles(element, props);
-    this.attachButtonEvents(element, component);
-    
-    return element;
-  }
-
-  /**
-   * Render a form component
-   */
-  private renderForm(component: MUPComponent): HTMLElement {
-    const props = component.props as FormProps;
-    const element = document.createElement('form');
-    
-    this.setBaseAttributes(element, component);
-    
-    if (props.method) {
-      element.method = props.method;
-    }
-    
-    if (props.action) {
-      element.action = props.action;
-    }
-    
-    this.renderChildren(element, component.children);
-    this.attachFormEvents(element, component);
-    
-    return element;
-  }
-
-  /**
-   * Render a fallback component for unknown types
-   */
-  private renderFallback(component: MUPComponent): HTMLElement {
-    const element = document.createElement('div');
-    this.setBaseAttributes(element, component);
-    element.className = `${this.options.cssPrefix}unknown-component`;
-    element.textContent = `Unknown component: ${component.type}`;
-    return element;
-  }
-
-  /**
-   * Set base attributes for all components
-   */
-  private setBaseAttributes(element: HTMLElement, component: MUPComponent): void {
-    if (component.id) {
-      element.setAttribute('data-mup-id', component.id);
-    }
-    
-    element.className = `${this.options.cssPrefix}${component.type}`;
-    
-    if (component.style) {
-      this.applyInlineStyles(element, component.style);
-    }
-  }
-
-  /**
-   * Render children components
-   */
-  private renderChildren(parent: HTMLElement, children?: MUPComponent[]): void {
-    if (!children || !Array.isArray(children)) {
-      return;
-    }
-    
-    children.forEach(child => {
-      const childElement = this.renderComponent(child);
-      parent.appendChild(childElement);
-    });
-  }
-
-  /**
-   * Apply container-specific styles
-   */
-  private applyContainerStyles(element: HTMLElement, props: ContainerProps): void {
-    const style = element.style;
-    
-    if (props.layout) {
-      style.display = props.layout === 'flex' ? 'flex' : 'block';
-    }
-    
-    if (props.direction) {
-      style.flexDirection = props.direction;
-    }
-    
-    if (props.align) {
-      style.alignItems = props.align;
-    }
-    
-    if (props.justify) {
-      style.justifyContent = props.justify;
-    }
-    
-    if (props.gap) {
-      style.gap = typeof props.gap === 'number' ? `${props.gap}px` : props.gap;
-    }
-    
-    if (props.padding) {
-      style.padding = typeof props.padding === 'number' ? `${props.padding}px` : props.padding;
-    }
-    
-    if (props.margin) {
-      style.margin = typeof props.margin === 'number' ? `${props.margin}px` : props.margin;
-    }
-    
-    if (props.background_color) {
-      style.backgroundColor = props.background_color;
-    }
-    
-    if (props.border) {
-      style.border = props.border;
-    }
-  }
-
-  /**
-   * Apply text-specific styles
-   */
-  private applyTextStyles(element: HTMLElement, props: TextProps): void {
-    const style = element.style;
-    
-    if (props.color) {
-      style.color = props.color;
-    }
-    
-    if (props.align) {
-      style.textAlign = props.align;
-    }
-    
-    if (props.weight) {
-      style.fontWeight = props.weight;
-    }
-    
-    if (props.size) {
-      style.fontSize = typeof props.size === 'number' ? `${props.size}px` : props.size;
-    }
-    
-    if (props.line_height) {
-      style.lineHeight = typeof props.line_height === 'number' ? `${props.line_height}` : props.line_height;
-    }
-    
-    if (props.font_family) {
-      style.fontFamily = props.font_family;
-    }
-    
-    if (props.decoration) {
-      style.textDecoration = props.decoration;
-    }
-  }
-
-  /**
-   * Apply input attributes
-   */
-  private applyInputAttributes(element: HTMLInputElement, props: InputProps): void {
-    if (props.type) {
-      element.type = props.type;
-    }
-    
-    if (props.name) {
-      element.name = props.name;
-    }
-    
-    if (props.placeholder) {
-      element.placeholder = props.placeholder;
-    }
-    
-    if (props.value !== undefined) {
-      element.value = String(props.value);
-    }
-    
-    if (props.required) {
-      element.required = true;
-    }
-    
-    if (props.disabled) {
-      element.disabled = true;
-    }
-    
-    if (props.readonly) {
-      element.readOnly = true;
-    }
-    
-    if (props.min !== undefined) {
-      element.min = String(props.min);
-    }
-    
-    if (props.max !== undefined) {
-      element.max = String(props.max);
-    }
-    
-    if (props.step !== undefined) {
-      element.step = String(props.step);
-    }
-    
-    if (props.pattern) {
-      element.pattern = props.pattern;
-    }
-  }
-
-  /**
-   * Apply input-specific styles
-   */
-  private applyInputStyles(element: HTMLElement, props: InputProps): void {
-    // Add any input-specific styling here
-  }
-
-  /**
-   * Apply button-specific styles
-   */
-  private applyButtonStyles(element: HTMLElement, props: ButtonProps): void {
-    if (props.variant) {
-      element.classList.add(`${this.options.cssPrefix}button-${props.variant}`);
-    }
-    
-    if (props.size) {
-      element.classList.add(`${this.options.cssPrefix}button-${props.size}`);
-    }
-  }
-
-  /**
-   * Apply inline styles from component style object
-   */
-  private applyInlineStyles(element: HTMLElement, styles: Record<string, any>): void {
-    Object.entries(styles).forEach(([property, value]) => {
-      const cssProperty = MUPUtils.kebabCase(property);
-      element.style.setProperty(cssProperty, String(value));
-    });
-  }
-
-  /**
-   * Get appropriate HTML tag for text variant
-   */
-  private getTextTagName(variant?: string): string {
-    switch (variant) {
-    case 'h1': return 'h1';
-    case 'h2': return 'h2';
-    case 'h3': return 'h3';
-    case 'h4': return 'h4';
-    case 'h5': return 'h5';
-    case 'h6': return 'h6';
-    case 'p': return 'p';
-    case 'span': return 'span';
-    case 'strong': return 'strong';
-    case 'em': return 'em';
-    case 'small': return 'small';
-    default: return 'div';
-    }
-  }
-
-  /**
-   * Attach event handlers for input components
-   */
-  private attachInputEvents(element: HTMLInputElement, component: MUPComponent): void {
-    if (!this.options.enableEventHandlers || !component.events) {
-      return;
-    }
-
-    if (component.events.on_change) {
-      const handler = (event: Event) => {
-        this.emitComponentEvent(component.id!, 'change', {
-          value: (event.target as HTMLInputElement).value
-        });
-      };
-      element.addEventListener('change', handler);
-      this.eventHandlers.set(`${component.id}-change`, handler);
-    }
-
-    if (component.events.on_focus) {
-      const handler = () => {
-        this.emitComponentEvent(component.id!, 'focus', {});
-      };
-      element.addEventListener('focus', handler);
-      this.eventHandlers.set(`${component.id}-focus`, handler);
-    }
-
-    if (component.events.on_blur) {
-      const handler = () => {
-        this.emitComponentEvent(component.id!, 'blur', {
-          value: element.value
-        });
-      };
-      element.addEventListener('blur', handler);
-      this.eventHandlers.set(`${component.id}-blur`, handler);
-    }
-  }
-
-  /**
-   * Attach event handlers for button components
-   */
-  private attachButtonEvents(element: HTMLButtonElement, component: MUPComponent): void {
-    if (!this.options.enableEventHandlers || !component.events) {
-      return;
-    }
-
-    if (component.events.on_click) {
-      const handler = (event: Event) => {
-        event.preventDefault();
-        this.emitComponentEvent(component.id!, 'click', {});
-      };
-      element.addEventListener('click', handler);
-      this.eventHandlers.set(`${component.id}-click`, handler);
-    }
-  }
-
-  /**
-   * Attach event handlers for form components
-   */
-  private attachFormEvents(element: HTMLFormElement, component: MUPComponent): void {
-    if (!this.options.enableEventHandlers || !component.events) {
-      return;
-    }
-
-    if (component.events.on_submit) {
-      const handler = (event: Event) => {
-        event.preventDefault();
-        const formData = new FormData(element);
-        const data = Object.fromEntries(formData.entries());
-        this.emitComponentEvent(component.id!, 'submit', data);
-      };
-      element.addEventListener('submit', handler);
-      this.eventHandlers.set(`${component.id}-submit`, handler);
-    }
-
-    if (component.events.on_reset) {
-      const handler = () => {
-        this.emitComponentEvent(component.id!, 'reset', {});
-      };
-      element.addEventListener('reset', handler);
-      this.eventHandlers.set(`${component.id}-reset`, handler);
-    }
-  }
-
-  /**
-   * Emit a component event (to be overridden or handled by client)
-   */
-  private emitComponentEvent(componentId: string, eventType: string, eventData: any): void {
-    // This will be handled by the MUPClient
-    const event = new CustomEvent('mup-component-event', {
-      detail: {
-        componentId,
-        eventType,
-        eventData
+  clear(): void {
+    for (const element of this.renderedComponents.values()) {
+      if (element.parentNode) {
+        element.parentNode.removeChild(element);
       }
+    }
+    
+    this.renderedComponents.clear();
+    this.config.eventManager.clear();
+  }
+
+  /**
+   * Set theme
+   * @param theme - New theme
+   */
+  setTheme(theme: 'light' | 'dark'): void {
+    this.config.theme = theme;
+    
+    // Update theme class on rendered elements
+    for (const element of this.renderedComponents.values()) {
+      element.classList.remove('mup-theme-light', 'mup-theme-dark');
+      element.classList.add(`mup-theme-${theme}`);
+    }
+  }
+
+  /**
+   * Add custom renderer
+   * @param type - Component type
+   * @param renderer - Renderer function
+   */
+  addRenderer(type: ComponentType, renderer: ComponentRenderer): void {
+    this.renderers.set(type, renderer);
+  }
+
+  /**
+   * Remove custom renderer
+   * @param type - Component type
+   */
+  removeRenderer(type: ComponentType): void {
+    this.renderers.delete(type);
+  }
+
+  /**
+   * Render a single component
+   * @param component - Component to render
+   * @param context - Render context
+   * @returns Rendered DOM element
+   */
+  private renderComponent(component: Component, context: RenderContext): HTMLElement {
+    const renderer = this.renderers.get(component.type);
+    if (!renderer) {
+      throw new Error(`No renderer found for component type: ${component.type}`);
+    }
+
+    const element = renderer(component, {
+      ...context,
+      depth: context.depth + 1
     });
-    document.dispatchEvent(event);
+
+    // Apply common attributes
+    this.applyCommonAttributes(element, component);
+    
+    // Apply styles
+    if (component.style) {
+      this.applyStyles(element, component.style);
+    }
+    
+    // Attach events
+    this.attachEvents(element, component, context);
+    
+    return element;
   }
 
   /**
-   * Clean up event handlers
+   * Apply common attributes to element
+   * @param element - DOM element
+   * @param component - Component data
    */
-  cleanup(): void {
-    this.eventHandlers.clear();
+  private applyCommonAttributes(element: HTMLElement, component: Component): void {
+    element.setAttribute('data-component-id', component.id);
+    element.setAttribute('data-component-type', component.type);
+    element.classList.add('mup-component', `mup-${component.type}`);
+    element.classList.add(`mup-theme-${this.config.theme}`);
   }
 
   /**
-   * Update renderer options
+   * Apply styles to element
+   * @param element - DOM element
+   * @param styles - Component styles
    */
-  updateOptions(options: Partial<RendererOptions>): void {
-    this.options = { ...this.options, ...options };
+  private applyStyles(element: HTMLElement, styles: ComponentStyle): void {
+    for (const [property, value] of Object.entries(styles)) {
+      const cssProperty = property.replace(/([A-Z])/g, '-$1').toLowerCase();
+      element.style.setProperty(cssProperty, String(value));
+    }
   }
 
   /**
-   * Register a custom component renderer
+   * Attach event listeners to element
+   * @param element - DOM element
+   * @param component - Component data
+   * @param context - Render context
    */
-  registerRenderer(componentType: string, renderer: ComponentRenderer): void {
-    this.options.customRenderers[componentType] = renderer;
+  private attachEvents(
+    element: HTMLElement,
+    component: Component,
+    context: RenderContext
+  ): void {
+    if (!component.events || !context.eventManager) {
+      return;
+    }
+
+    component.events.forEach(event => {
+      element.addEventListener(event.type, (domEvent) => {
+        context.eventManager!.emit(component.id, event.type, {
+          ...event.data,
+          domEvent,
+          element
+        });
+      });
+    });
   }
 
   /**
-   * Unregister a custom component renderer
+   * Initialize default component renderers
    */
-  unregisterRenderer(componentType: string): void {
-    delete this.options.customRenderers[componentType];
+  private initializeDefaultRenderers(): void {
+    // Container renderer
+    this.renderers.set('container', (component, context) => {
+      const div = document.createElement('div');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          div.appendChild(childElement);
+        });
+      }
+      
+      return div;
+    });
+
+    // Text renderer
+    this.renderers.set('text', (component) => {
+      const span = document.createElement('span');
+      span.textContent = component.props?.text || '';
+      return span;
+    });
+
+    // Button renderer
+    this.renderers.set('button', (component) => {
+      const button = document.createElement('button');
+      button.textContent = component.props?.text || 'Button';
+      button.disabled = component.props?.disabled || false;
+      return button;
+    });
+
+    // Input renderer
+    this.renderers.set('input', (component) => {
+      const input = document.createElement('input');
+      input.type = component.props?.type || 'text';
+      input.placeholder = component.props?.placeholder || '';
+      input.value = component.props?.value || '';
+      input.disabled = component.props?.disabled || false;
+      return input;
+    });
+
+    // Image renderer
+    this.renderers.set('image', (component) => {
+      const img = document.createElement('img');
+      img.src = component.props?.src || '';
+      img.alt = component.props?.alt || '';
+      return img;
+    });
+
+    // List renderer
+    this.renderers.set('list', (component, context) => {
+      const ul = document.createElement('ul');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const li = document.createElement('li');
+          const childElement = this.renderComponent(child, context);
+          li.appendChild(childElement);
+          ul.appendChild(li);
+        });
+      }
+      
+      return ul;
+    });
+
+    // Card renderer
+    this.renderers.set('card', (component, context) => {
+      const card = document.createElement('div');
+      card.classList.add('mup-card');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          card.appendChild(childElement);
+        });
+      }
+      
+      return card;
+    });
+
+    // Form renderer
+    this.renderers.set('form', (component, context) => {
+      const form = document.createElement('form');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          form.appendChild(childElement);
+        });
+      }
+      
+      return form;
+    });
+
+    // Navigation renderer
+    this.renderers.set('navigation', (component, context) => {
+      const nav = document.createElement('nav');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          nav.appendChild(childElement);
+        });
+      }
+      
+      return nav;
+    });
+
+    // Modal renderer
+    this.renderers.set('modal', (component, context) => {
+      const modal = document.createElement('div');
+      modal.classList.add('mup-modal');
+      
+      const content = document.createElement('div');
+      content.classList.add('mup-modal-content');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          content.appendChild(childElement);
+        });
+      }
+      
+      modal.appendChild(content);
+      return modal;
+    });
+
+    // Table renderer
+    this.renderers.set('table', (component, context) => {
+      const table = document.createElement('table');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          table.appendChild(childElement);
+        });
+      }
+      
+      return table;
+    });
+
+    // Chart renderer (placeholder)
+    this.renderers.set('chart', (component) => {
+      const div = document.createElement('div');
+      div.classList.add('mup-chart');
+      div.textContent = `Chart: ${component.props?.type || 'unknown'}`;
+      return div;
+    });
+
+    // Custom renderer (fallback)
+    this.renderers.set('custom', (component, context) => {
+      const div = document.createElement('div');
+      div.classList.add('mup-custom');
+      
+      if (component.children) {
+        component.children.forEach(child => {
+          const childElement = this.renderComponent(child, context);
+          div.appendChild(childElement);
+        });
+      }
+      
+      return div;
+    });
+  }
+
+  /**
+   * Merge custom renderers with default ones
+   */
+  private mergeCustomRenderers(): void {
+    for (const [type, renderer] of this.config.customRenderers) {
+      this.renderers.set(type, renderer);
+    }
   }
 }

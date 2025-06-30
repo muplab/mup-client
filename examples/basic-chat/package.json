@@ -11,9 +11,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@muprotocol/client": "^1.0.0",
-    "@muprotocol/server": "^1.0.0",
-    "@muprotocol/types": "^1.0.0"
+    "@muprotocol/client": "^0.1.2",
+    "@muprotocol/server": "^0.1.2",
+    "@muprotocol/types": "^0.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

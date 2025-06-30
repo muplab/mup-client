@@ -1,47 +1,29 @@
-import typescript from '@rollup/plugin-typescript';
-import resolve from '@rollup/plugin-node-resolve';
-import commonjs from '@rollup/plugin-commonjs';
-import { dts } from 'rollup-plugin-dts';
+import typescript from 'rollup-plugin-typescript2';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
-const config = [
-  // ES modules build
-  {
-    input: 'src/index.ts',
-    output: {
-      file: 'dist/index.esm.js',
-      format: 'es',
-      sourcemap: true
-    },
-    plugins: [
-      resolve(),
-      commonjs(),
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: true,
-        declarationDir: 'dist',
-        outDir: 'dist'
-      })
-    ],
-    external: ['@muprotocol/types', 'ws', 'uuid']
-  },
-  // CommonJS build
-  {
-    input: 'src/index.ts',
-    output: {
+export default {
+  input: 'src/index.ts',
+  output: [
+    {
       file: 'dist/index.js',
       format: 'cjs',
       sourcemap: true
     },
-    plugins: [
-      resolve(),
-      commonjs(),
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: false
-      })
-    ],
-    external: ['@muprotocol/types', 'ws', 'uuid']
-  }
-];
-
-export default config;
+    {
+      file: 'dist/index.esm.js',
+      format: 'esm',
+      sourcemap: true
+    }
+  ],
+  plugins: [
+    typescript({
+      typescript: require('typescript'),
+      tsconfig: './tsconfig.json'
+    })
+  ],
+  external: [
+    '@muprotocol/types',
+    'uuid'
+  ]
+};

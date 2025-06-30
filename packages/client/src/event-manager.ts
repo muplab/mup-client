@@ -1,245 +1,89 @@
-import { MUPUtils } from '@muprotocol/core';
+/**
+ * MUP Event Manager
+ * Event management for MUP client
+ */
 
-export type EventListener<T = any> = (data: T) => void;
+import { EventEmitter } from 'eventemitter3';
+import { EventTrigger, ComponentEvent } from '@muprotocol/types';
 
-export interface EventMap {
-  [event: string]: EventListener[];
+/**
+ * Event manager configuration
+ */
+export interface EventManagerConfig {
+  maxListeners?: number;
+  captureRejections?: boolean;
 }
 
-export class EventManager {
-  private events: EventMap = {};
-  private maxListeners = 100;
-  private onceListeners = new WeakMap<EventListener, EventListener>();
+/**
+ * Event manager for handling MUP events
+ */
+export class EventManager extends EventEmitter {
+  private config: EventManagerConfig;
 
-  /**
-   * Add an event listener
-   */
-  on<T = any>(event: string, listener: EventListener<T>): void {
-    if (!this.events[event]) {
-      this.events[event] = [];
-    }
-
-    if (this.events[event].length >= this.maxListeners) {
-      console.warn(`Maximum listeners (${this.maxListeners}) exceeded for event: ${event}`);
-      return;
-    }
-
-    this.events[event].push(listener);
-  }
-
-  /**
-   * Add a one-time event listener
-   */
-  once<T = any>(event: string, listener: EventListener<T>): void {
-    const onceWrapper = (data: T) => {
-      this.off(event, onceWrapper);
-      listener(data);
+  constructor(config: EventManagerConfig = {}) {
+    super();
+    this.config = {
+      maxListeners: 10,
+      captureRejections: false,
+      ...config
     };
 
-    this.onceListeners.set(listener, onceWrapper);
-    this.on(event, onceWrapper);
-  }
-
-  /**
-   * Remove an event listener
-   */
-  off<T = any>(event: string, listener: EventListener<T>): void {
-    if (!this.events[event]) {
-      return;
-    }
-
-    // Check if this is a once listener
-    const onceWrapper = this.onceListeners.get(listener);
-    const targetListener = onceWrapper || listener;
-
-    const index = this.events[event].indexOf(targetListener);
-    if (index > -1) {
-      this.events[event].splice(index, 1);
-      
-      if (onceWrapper) {
-        this.onceListeners.delete(listener);
-      }
-    }
-
-    // Clean up empty event arrays
-    if (this.events[event].length === 0) {
-      delete this.events[event];
+    if (this.config.maxListeners) {
+      this.setMaxListeners(this.config.maxListeners);
     }
   }
 
   /**
-   * Emit an event to all listeners
+   * Handle incoming event trigger
+   * @param eventTrigger - Event trigger message
    */
-  emit<T = any>(event: string, data?: T): void {
-    if (!this.events[event]) {
-      return;
-    }
-
-    // Create a copy of listeners to avoid issues if listeners are modified during emission
-    const listeners = [...this.events[event]];
+  handleEventTrigger(eventTrigger: EventTrigger): void {
+    const { component_id, event_type, event_data } = eventTrigger.payload;
     
-    for (const listener of listeners) {
-      try {
-        listener(data);
-      } catch (error) {
-        console.error(`Error in event listener for '${event}':`, error);
-      }
-    }
-  }
-
-  /**
-   * Remove all listeners for a specific event
-   */
-  removeAllListeners(event?: string): void {
-    if (event) {
-      delete this.events[event];
-    } else {
-      this.events = {};
-      // Clear the WeakMap by creating a new one
-      this.onceListeners = new WeakMap();
-    }
-  }
-
-  /**
-   * Get the number of listeners for an event
-   */
-  listenerCount(event: string): number {
-    return this.events[event]?.length || 0;
-  }
-
-  /**
-   * Get all event names that have listeners
-   */
-  eventNames(): string[] {
-    return Object.keys(this.events);
-  }
-
-  /**
-   * Set the maximum number of listeners per event
-   */
-  setMaxListeners(max: number): void {
-    this.maxListeners = Math.max(0, max);
-  }
-
-  /**
-   * Get the maximum number of listeners per event
-   */
-  getMaxListeners(): number {
-    return this.maxListeners;
-  }
-
-  /**
-   * Check if there are any listeners for an event
-   */
-  hasListeners(event: string): boolean {
-    return this.listenerCount(event) > 0;
-  }
-
-  /**
-   * Create a debounced event emitter
-   */
-  createDebouncedEmitter<T = any>(event: string, delay: number): (data?: T) => void {
-    return MUPUtils.debounce((data?: T) => {
-      this.emit(event, data);
-    }, delay);
-  }
-
-  /**
-   * Create a throttled event emitter
-   */
-  createThrottledEmitter<T = any>(event: string, delay: number): (data?: T) => void {
-    return MUPUtils.throttle((data?: T) => {
-      this.emit(event, data);
-    }, delay);
-  }
-
-  /**
-   * Wait for an event to be emitted
-   */
-  waitFor<T = any>(event: string, timeout?: number): Promise<T> {
-    return new Promise((resolve, reject) => {
-      let timeoutId: NodeJS.Timeout | undefined;
-
-      const cleanup = () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-      };
-
-      const listener = (data: T) => {
-        cleanup();
-        resolve(data);
-      };
-
-      this.once(event, listener);
-
-      if (timeout && timeout > 0) {
-        timeoutId = setTimeout(() => {
-          this.off(event, listener);
-          reject(new Error(`Timeout waiting for event: ${event}`));
-        }, timeout);
-      }
+    // Emit component-specific event
+    this.emit(`component:${component_id}:${event_type}`, event_data);
+    
+    // Emit general event
+    this.emit('event', {
+      componentId: component_id,
+      eventType: event_type,
+      data: event_data
     });
   }
 
   /**
-   * Create a promise that resolves when any of the specified events are emitted
+   * Register component event handler
+   * @param componentId - Component ID
+   * @param eventType - Event type
+   * @param handler - Event handler function
    */
-  waitForAny<T = any>(events: string[], timeout?: number): Promise<{ event: string; data: T }> {
-    return new Promise((resolve, reject) => {
-      let timeoutId: NodeJS.Timeout | undefined;
-      const listeners: Array<{ event: string; listener: EventListener }> = [];
-
-      const cleanup = () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        listeners.forEach(({ event, listener }) => {
-          this.off(event, listener);
-        });
-      };
-
-      events.forEach(event => {
-        const listener = (data: T) => {
-          cleanup();
-          resolve({ event, data });
-        };
-        listeners.push({ event, listener });
-        this.once(event, listener);
-      });
-
-      if (timeout && timeout > 0) {
-        timeoutId = setTimeout(() => {
-          cleanup();
-          reject(new Error(`Timeout waiting for events: ${events.join(', ')}`));
-        }, timeout);
-      }
-    });
+  onComponentEvent(componentId: string, eventType: string, handler: (data: any) => void): void {
+    this.on(`component:${componentId}:${eventType}`, handler);
   }
 
   /**
-   * Get debug information about the event manager
+   * Remove component event handler
+   * @param componentId - Component ID
+   * @param eventType - Event type
+   * @param handler - Event handler function
    */
-  getDebugInfo(): {
-    totalEvents: number;
-    totalListeners: number;
-    events: Record<string, number>;
-    maxListeners: number;
-    } {
-    const events: Record<string, number> = {};
-    let totalListeners = 0;
+  offComponentEvent(componentId: string, eventType: string, handler: (data: any) => void): void {
+    this.off(`component:${componentId}:${eventType}`, handler);
+  }
 
-    Object.keys(this.events).forEach(event => {
-      const count = this.events[event].length;
-      events[event] = count;
-      totalListeners += count;
-    });
+  /**
+   * Trigger component event
+   * @param componentId - Component ID
+   * @param event - Component event
+   */
+  triggerComponentEvent(componentId: string, event: ComponentEvent): void {
+    this.emit(`component:${componentId}:${event.type}`, event.data);
+  }
 
-    return {
-      totalEvents: Object.keys(this.events).length,
-      totalListeners,
-      events,
-      maxListeners: this.maxListeners
-    };
+  /**
+   * Clear all event listeners
+   */
+  clearAllListeners(): void {
+    this.removeAllListeners();
   }
 }

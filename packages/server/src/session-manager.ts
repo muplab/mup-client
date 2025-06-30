@@ -1,430 +1,512 @@
-import * as WebSocket from 'ws';
-import { IncomingMessage } from 'http';
+/**
+ * MUP Session Manager
+ * Manages client sessions for MUP protocol v1
+ */
+
+import { EventEmitter } from 'eventemitter3';
 import { v4 as uuidv4 } from 'uuid';
-import { ClientCapabilities, MUPMessage } from '@muprotocol/types';
-import { MUPUtils, MessageParser } from '@muprotocol/core';
 
-export interface SessionMetadata {
-  ip?: string;
-  userAgent?: string;
-  [key: string]: any;
+/**
+ * Session data
+ */
+export interface SessionData {
+  id: string;
+  clientId: string;
+  userId?: string;
+  createdAt: number;
+  lastAccessedAt: number;
+  expiresAt: number;
+  data: Record<string, any>;
+  isActive: boolean;
 }
 
-export class Session {
-  readonly id: string;
-  private socket: WebSocket;
-  private request: IncomingMessage;
-  private authenticated = false;
-  private clientCapabilities: ClientCapabilities | null = null;
-  private metadata: SessionMetadata = {};
-  private createdAt: number;
-  private lastActivity: number;
-  private isAliveFlag = true;
-  private pingTimeout?: NodeJS.Timeout;
+/**
+ * Session configuration
+ */
+export interface SessionConfig {
+  ttl?: number;                    // Session TTL in milliseconds
+  cleanupInterval?: number;        // Cleanup interval in milliseconds
+  maxSessions?: number;           // Maximum sessions per client
+  enablePersistence?: boolean;    // Enable session persistence
+  storageAdapter?: SessionStorageAdapter;
+}
 
-  constructor(socket: WebSocket, request: IncomingMessage) {
-    this.id = uuidv4();
-    this.socket = socket;
-    this.request = request;
-    this.createdAt = Date.now();
-    this.lastActivity = this.createdAt;
+/**
+ * Session storage adapter interface
+ */
+export interface SessionStorageAdapter {
+  get(sessionId: string): Promise<SessionData | null>;
+  set(sessionId: string, session: SessionData): Promise<void>;
+  delete(sessionId: string): Promise<void>;
+  list(): Promise<SessionData[]>;
+  cleanup(expiredBefore: number): Promise<number>;
+}
 
-    // Extract basic metadata
-    this.metadata.ip = request.socket.remoteAddress;
-    this.metadata.userAgent = request.headers['user-agent'];
+/**
+ * Session manager events
+ */
+export interface SessionManagerEvents {
+  'session:created': (session: SessionData) => void;
+  'session:updated': (session: SessionData) => void;
+  'session:expired': (sessionId: string) => void;
+  'session:destroyed': (sessionId: string) => void;
+  'cleanup:completed': (removedCount: number) => void;
+}
 
-    // Setup pong handler
-    socket.on('pong', () => {
-      this.isAliveFlag = true;
-      this.updateActivity();
-    });
+/**
+ * In-memory session storage adapter
+ */
+export class MemorySessionStorage implements SessionStorageAdapter {
+  private sessions = new Map<string, SessionData>();
+
+  async get(sessionId: string): Promise<SessionData | null> {
+    return this.sessions.get(sessionId) || null;
   }
 
-  /**
-   * Send a message to the client
-   */
-  async send(message: MUPMessage | string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const data = typeof message === 'string' ? message : JSON.stringify(message);
-      
-      this.socket.send(data, (error) => {
-        if (error) {
-          reject(error);
-        } else {
-          this.updateActivity();
-          resolve();
-        }
-      });
-    });
+  async set(sessionId: string, session: SessionData): Promise<void> {
+    this.sessions.set(sessionId, session);
   }
 
-  /**
-   * Disconnect the client
-   */
-  disconnect(reason?: string): void {
-    try {
-      this.socket.close(1000, reason);
-    } catch (error) {
-      console.error('Error closing socket:', error);
-    }
+  async delete(sessionId: string): Promise<void> {
+    this.sessions.delete(sessionId);
   }
 
-  /**
-   * Send a ping to the client
-   */
-  ping(timeout = 5000): void {
-    this.isAliveFlag = false;
+  async list(): Promise<SessionData[]> {
+    return Array.from(this.sessions.values());
+  }
+
+  async cleanup(expiredBefore: number): Promise<number> {
+    let removedCount = 0;
     
-    // Clear any existing timeout
-    if (this.pingTimeout) {
-      clearTimeout(this.pingTimeout);
+    for (const [sessionId, session] of this.sessions.entries()) {
+      if (session.expiresAt < expiredBefore) {
+        this.sessions.delete(sessionId);
+        removedCount++;
+      }
     }
-
-    // Set a new timeout
-    this.pingTimeout = setTimeout(() => {
-      this.isAliveFlag = false;
-    }, timeout);
-
-    // Send ping
-    try {
-      this.socket.ping();
-    } catch (error) {
-      console.error('Error sending ping:', error);
-      this.isAliveFlag = false;
-    }
-  }
-
-  /**
-   * Check if the client is alive
-   */
-  isAlive(): boolean {
-    return this.isAliveFlag && this.socket.readyState === WebSocket.OPEN;
-  }
-
-  /**
-   * Set the client as authenticated
-   */
-  setAuthenticated(value: boolean): void {
-    this.authenticated = value;
-    this.updateActivity();
-  }
-
-  /**
-   * Check if the client is authenticated
-   */
-  isAuthenticated(): boolean {
-    return this.authenticated;
-  }
-
-  /**
-   * Set client capabilities
-   */
-  setClientCapabilities(capabilities: ClientCapabilities | null): void {
-    this.clientCapabilities = capabilities ? MUPUtils.deepCopy(capabilities) : null;
-  }
-
-  /**
-   * Get client capabilities
-   */
-  getClientCapabilities(): ClientCapabilities | null {
-    return this.clientCapabilities ? MUPUtils.deepCopy(this.clientCapabilities) : null;
-  }
-
-  /**
-   * Set session metadata
-   */
-  setMetadata(key: string, value: any): void {
-    this.metadata[key] = value;
-  }
-
-  /**
-   * Get session metadata
-   */
-  getMetadata(key?: string): any {
-    if (key) {
-      return this.metadata[key];
-    }
-    return { ...this.metadata };
-  }
-
-  /**
-   * Update last activity timestamp
-   */
-  updateActivity(): void {
-    this.lastActivity = Date.now();
-  }
-
-  /**
-   * Get session creation time
-   */
-  getCreatedAt(): number {
-    return this.createdAt;
-  }
-
-  /**
-   * Get last activity time
-   */
-  getLastActivity(): number {
-    return this.lastActivity;
-  }
-
-  /**
-   * Get session age in milliseconds
-   */
-  getAge(): number {
-    return Date.now() - this.createdAt;
-  }
-
-  /**
-   * Get time since last activity in milliseconds
-   */
-  getIdleTime(): number {
-    return Date.now() - this.lastActivity;
-  }
-
-  /**
-   * Get the client's IP address
-   */
-  getIp(): string | undefined {
-    return this.metadata.ip;
-  }
-
-  /**
-   * Get the client's user agent
-   */
-  getUserAgent(): string | undefined {
-    return this.metadata.userAgent;
-  }
-
-  /**
-   * Get the WebSocket readyState
-   */
-  getReadyState(): number {
-    return this.socket.readyState;
-  }
-
-  /**
-   * Check if the WebSocket is open
-   */
-  isOpen(): boolean {
-    return this.socket.readyState === WebSocket.OPEN;
-  }
-
-  /**
-   * Get the original request
-   */
-  getRequest(): IncomingMessage {
-    return this.request;
+    
+    return removedCount;
   }
 }
 
-export type SessionEventListener<T = any> = (data: T) => void;
+/**
+ * MUP session manager
+ */
+export class SessionManager extends EventEmitter<SessionManagerEvents> {
+  private config: Required<SessionConfig>;
+  private storage: SessionStorageAdapter;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
-export interface SessionEventMap {
-  [event: string]: SessionEventListener[];
-}
+  constructor(config: SessionConfig = {}) {
+    super();
+    
+    this.config = {
+      ttl: config.ttl ?? 24 * 60 * 60 * 1000, // 24 hours
+      cleanupInterval: config.cleanupInterval ?? 60 * 60 * 1000, // 1 hour
+      maxSessions: config.maxSessions ?? 10,
+      enablePersistence: config.enablePersistence ?? false,
+      storageAdapter: config.storageAdapter ?? new MemorySessionStorage()
+    };
 
-export class SessionManager {
-  private sessions: Map<string, Session> = new Map();
-  private events: SessionEventMap = {};
+    this.storage = this.config.storageAdapter;
+    this.startCleanupTimer();
+  }
 
   /**
-   * Create a new session
+   * Create new session
+   * @param clientId - Client ID
+   * @param userId - Optional user ID
+   * @param initialData - Initial session data
+   * @returns Created session
    */
-  createSession(socket: WebSocket, request: IncomingMessage): Session {
-    const session = new Session(socket, request);
-    this.sessions.set(session.id, session);
+  async createSession(
+    clientId: string,
+    userId?: string,
+    initialData: Record<string, any> = {}
+  ): Promise<SessionData> {
+    // Check session limit for client
+    const existingSessions = await this.getSessionsByClient(clientId);
+    if (existingSessions.length >= this.config.maxSessions) {
+      // Remove oldest session
+      const oldestSession = existingSessions
+        .sort((a, b) => a.lastAccessedAt - b.lastAccessedAt)[0];
+      await this.destroySession(oldestSession.id);
+    }
+
+    const now = Date.now();
+    const session: SessionData = {
+      id: uuidv4(),
+      clientId,
+      userId,
+      createdAt: now,
+      lastAccessedAt: now,
+      expiresAt: now + this.config.ttl,
+      data: { ...initialData },
+      isActive: true
+    };
+
+    await this.storage.set(session.id, session);
+    this.emit('session:created', session);
+    
     return session;
   }
 
   /**
-   * Get a session by ID
+   * Get session by ID
+   * @param sessionId - Session ID
+   * @returns Session data or null
    */
-  getSession(sessionId: string): Session | undefined {
-    return this.sessions.get(sessionId);
-  }
-
-  /**
-   * Remove a session
-   */
-  removeSession(sessionId: string): boolean {
-    return this.sessions.delete(sessionId);
-  }
-
-  /**
-   * Get all sessions
-   */
-  getAllSessions(): Session[] {
-    return Array.from(this.sessions.values());
-  }
-
-  /**
-   * Get authenticated sessions
-   */
-  getAuthenticatedSessions(): Session[] {
-    return this.getAllSessions().filter(session => session.isAuthenticated());
-  }
-
-  /**
-   * Get the number of sessions
-   */
-  getSessionCount(): number {
-    return this.sessions.size;
-  }
-
-  /**
-   * Get the number of authenticated sessions
-   */
-  getAuthenticatedSessionCount(): number {
-    return this.getAuthenticatedSessions().length;
-  }
-
-  /**
-   * Broadcast a message to all sessions
-   */
-  async broadcast(message: MUPMessage | string, authenticatedOnly = true): Promise<void> {
-    const sessions = authenticatedOnly ? this.getAuthenticatedSessions() : this.getAllSessions();
-    const data = typeof message === 'string' ? message : JSON.stringify(message);
+  async getSession(sessionId: string): Promise<SessionData | null> {
+    const session = await this.storage.get(sessionId);
     
-    const promises = sessions.map(session => session.send(data));
-    await Promise.all(promises);
-  }
-
-  /**
-   * Disconnect all sessions
-   */
-  disconnectAll(reason?: string): void {
-    this.getAllSessions().forEach(session => {
-      session.disconnect(reason);
-    });
-  }
-
-  /**
-   * Find sessions by metadata
-   */
-  findSessionsByMetadata(key: string, value: any): Session[] {
-    return this.getAllSessions().filter(session => {
-      const metadataValue = session.getMetadata(key);
-      return metadataValue === value;
-    });
-  }
-
-  /**
-   * Find sessions by IP address
-   */
-  findSessionsByIp(ip: string): Session[] {
-    return this.findSessionsByMetadata('ip', ip);
-  }
-
-  /**
-   * Find sessions by user agent
-   */
-  findSessionsByUserAgent(userAgent: string): Session[] {
-    return this.findSessionsByMetadata('userAgent', userAgent);
-  }
-
-  /**
-   * Find idle sessions
-   */
-  findIdleSessions(idleTime: number): Session[] {
-    const now = Date.now();
-    return this.getAllSessions().filter(session => {
-      return now - session.getLastActivity() >= idleTime;
-    });
-  }
-
-  /**
-   * Disconnect idle sessions
-   */
-  disconnectIdleSessions(idleTime: number, reason = 'Session timeout'): number {
-    const idleSessions = this.findIdleSessions(idleTime);
-    idleSessions.forEach(session => {
-      session.disconnect(reason);
-    });
-    return idleSessions.length;
-  }
-
-  /**
-   * Add an event listener
-   */
-  on<T = any>(event: string, listener: SessionEventListener<T>): void {
-    if (!this.events[event]) {
-      this.events[event] = [];
+    if (!session) {
+      return null;
     }
-    this.events[event].push(listener);
+
+    // Check if session is expired
+    if (session.expiresAt < Date.now()) {
+      await this.expireSession(sessionId);
+      return null;
+    }
+
+    // Update last accessed time
+    session.lastAccessedAt = Date.now();
+    await this.storage.set(sessionId, session);
+    
+    return session;
   }
 
   /**
-   * Remove an event listener
+   * Update session data
+   * @param sessionId - Session ID
+   * @param data - Data to update
+   * @returns Updated session or null
    */
-  off<T = any>(event: string, listener: SessionEventListener<T>): void {
-    if (!this.events[event]) {
-      return;
+  async updateSession(
+    sessionId: string,
+    data: Partial<Record<string, any>>
+  ): Promise<SessionData | null> {
+    const session = await this.getSession(sessionId);
+    
+    if (!session) {
+      return null;
     }
-    const index = this.events[event].indexOf(listener);
-    if (index > -1) {
-      this.events[event].splice(index, 1);
-    }
+
+    // Merge data
+    session.data = { ...session.data, ...data };
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return session;
   }
 
   /**
-   * Add a one-time event listener
+   * Set session data value
+   * @param sessionId - Session ID
+   * @param key - Data key
+   * @param value - Data value
+   * @returns True if successful
    */
-  once<T = any>(event: string, listener: SessionEventListener<T>): void {
-    const onceListener = (data: T) => {
-      this.off(event, onceListener);
-      listener(data);
-    };
-    this.on(event, onceListener);
+  async setSessionData(sessionId: string, key: string, value: any): Promise<boolean> {
+    const session = await this.getSession(sessionId);
+    
+    if (!session) {
+      return false;
+    }
+
+    session.data[key] = value;
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return true;
   }
 
   /**
-   * Emit an event
+   * Get session data value
+   * @param sessionId - Session ID
+   * @param key - Data key
+   * @returns Data value or undefined
    */
-  emit<T = any>(event: string, ...args: any[]): void {
-    if (!this.events[event]) {
-      return;
+  async getSessionData(sessionId: string, key: string): Promise<any> {
+    const session = await this.getSession(sessionId);
+    return session?.data[key];
+  }
+
+  /**
+   * Remove session data value
+   * @param sessionId - Session ID
+   * @param key - Data key
+   * @returns True if successful
+   */
+  async removeSessionData(sessionId: string, key: string): Promise<boolean> {
+    const session = await this.getSession(sessionId);
+    
+    if (!session) {
+      return false;
     }
-    const listeners = [...this.events[event]];
-    for (const listener of listeners) {
-      try {
-        listener(...args);
-      } catch (error) {
-        console.error(`Error in event listener for '${event}':`, error);
+
+    delete session.data[key];
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return true;
+  }
+
+  /**
+   * Extend session expiration
+   * @param sessionId - Session ID
+   * @param additionalTime - Additional time in milliseconds
+   * @returns True if successful
+   */
+  async extendSession(sessionId: string, additionalTime?: number): Promise<boolean> {
+    const session = await this.getSession(sessionId);
+    
+    if (!session) {
+      return false;
+    }
+
+    const extension = additionalTime ?? this.config.ttl;
+    session.expiresAt = Math.max(session.expiresAt, Date.now()) + extension;
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return true;
+  }
+
+  /**
+   * Destroy session
+   * @param sessionId - Session ID
+   * @returns True if successful
+   */
+  async destroySession(sessionId: string): Promise<boolean> {
+    const session = await this.storage.get(sessionId);
+    
+    if (!session) {
+      return false;
+    }
+
+    await this.storage.delete(sessionId);
+    this.emit('session:destroyed', sessionId);
+    
+    return true;
+  }
+
+  /**
+   * Get sessions by client ID
+   * @param clientId - Client ID
+   * @returns Array of sessions
+   */
+  async getSessionsByClient(clientId: string): Promise<SessionData[]> {
+    const allSessions = await this.storage.list();
+    return allSessions.filter(session => 
+      session.clientId === clientId && 
+      session.expiresAt > Date.now()
+    );
+  }
+
+  /**
+   * Get sessions by user ID
+   * @param userId - User ID
+   * @returns Array of sessions
+   */
+  async getSessionsByUser(userId: string): Promise<SessionData[]> {
+    const allSessions = await this.storage.list();
+    return allSessions.filter(session => 
+      session.userId === userId && 
+      session.expiresAt > Date.now()
+    );
+  }
+
+  /**
+   * Get all active sessions
+   * @returns Array of active sessions
+   */
+  async getActiveSessions(): Promise<SessionData[]> {
+    const allSessions = await this.storage.list();
+    return allSessions.filter(session => 
+      session.isActive && 
+      session.expiresAt > Date.now()
+    );
+  }
+
+  /**
+   * Get session count
+   * @returns Number of active sessions
+   */
+  async getSessionCount(): Promise<number> {
+    const activeSessions = await this.getActiveSessions();
+    return activeSessions.length;
+  }
+
+  /**
+   * Deactivate session
+   * @param sessionId - Session ID
+   * @returns True if successful
+   */
+  async deactivateSession(sessionId: string): Promise<boolean> {
+    const session = await this.getSession(sessionId);
+    
+    if (!session) {
+      return false;
+    }
+
+    session.isActive = false;
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return true;
+  }
+
+  /**
+   * Reactivate session
+   * @param sessionId - Session ID
+   * @returns True if successful
+   */
+  async reactivateSession(sessionId: string): Promise<boolean> {
+    const session = await this.storage.get(sessionId);
+    
+    if (!session || session.expiresAt < Date.now()) {
+      return false;
+    }
+
+    session.isActive = true;
+    session.lastAccessedAt = Date.now();
+    
+    await this.storage.set(sessionId, session);
+    this.emit('session:updated', session);
+    
+    return true;
+  }
+
+  /**
+   * Destroy all sessions for client
+   * @param clientId - Client ID
+   * @returns Number of destroyed sessions
+   */
+  async destroyClientSessions(clientId: string): Promise<number> {
+    const sessions = await this.getSessionsByClient(clientId);
+    let destroyedCount = 0;
+    
+    for (const session of sessions) {
+      if (await this.destroySession(session.id)) {
+        destroyedCount++;
       }
     }
+    
+    return destroyedCount;
   }
 
   /**
-   * Remove all listeners for an event
+   * Destroy all sessions for user
+   * @param userId - User ID
+   * @returns Number of destroyed sessions
    */
-  removeAllListeners(event?: string): void {
-    if (event) {
-      delete this.events[event];
-    } else {
-      this.events = {};
+  async destroyUserSessions(userId: string): Promise<number> {
+    const sessions = await this.getSessionsByUser(userId);
+    let destroyedCount = 0;
+    
+    for (const session of sessions) {
+      if (await this.destroySession(session.id)) {
+        destroyedCount++;
+      }
+    }
+    
+    return destroyedCount;
+  }
+
+  /**
+   * Clean up expired sessions
+   * @returns Number of cleaned up sessions
+   */
+  async cleanup(): Promise<number> {
+    const now = Date.now();
+    const removedCount = await this.storage.cleanup(now);
+    
+    this.emit('cleanup:completed', removedCount);
+    
+    return removedCount;
+  }
+
+  /**
+   * Stop session manager
+   */
+  stop(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
     }
   }
 
   /**
-   * Get debug information
+   * Get session statistics
+   * @returns Session statistics
    */
-  getDebugInfo(): {
-    totalSessions: number;
-    authenticatedSessions: number;
-    openSessions: number;
-    events: Record<string, number>;
-    } {
-    const events: Record<string, number> = {};
-    Object.keys(this.events).forEach(event => {
-      events[event] = this.events[event].length;
-    });
-
-    return {
-      totalSessions: this.sessions.size,
-      authenticatedSessions: this.getAuthenticatedSessionCount(),
-      openSessions: this.getAllSessions().filter(session => session.isOpen()).length,
-      events
+  async getStats(): Promise<{
+    total: number;
+    active: number;
+    expired: number;
+    byClient: Record<string, number>;
+    byUser: Record<string, number>;
+  }> {
+    const allSessions = await this.storage.list();
+    const now = Date.now();
+    
+    const stats = {
+      total: allSessions.length,
+      active: 0,
+      expired: 0,
+      byClient: {} as Record<string, number>,
+      byUser: {} as Record<string, number>
     };
+    
+    for (const session of allSessions) {
+      if (session.expiresAt > now && session.isActive) {
+        stats.active++;
+      } else {
+        stats.expired++;
+      }
+      
+      // Count by client
+      stats.byClient[session.clientId] = (stats.byClient[session.clientId] || 0) + 1;
+      
+      // Count by user
+      if (session.userId) {
+        stats.byUser[session.userId] = (stats.byUser[session.userId] || 0) + 1;
+      }
+    }
+    
+    return stats;
+  }
+
+  /**
+   * Expire session
+   * @param sessionId - Session ID
+   */
+  private async expireSession(sessionId: string): Promise<void> {
+    await this.storage.delete(sessionId);
+    this.emit('session:expired', sessionId);
+  }
+
+  /**
+   * Start cleanup timer
+   */
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(async () => {
+      try {
+        await this.cleanup();
+      } catch (error) {
+        console.error('Session cleanup error:', error);
+      }
+    }, this.config.cleanupInterval);
   }
 }

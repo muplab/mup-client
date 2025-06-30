@@ -1,46 +1,38 @@
-import resolve from '@rollup/plugin-node-resolve';
-import commonjs from '@rollup/plugin-commonjs';
-import typescript from '@rollup/plugin-typescript';
+import typescript from 'rollup-plugin-typescript2';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 
-const config = [
-  // ES modules build
-  {
-    input: 'src/index.ts',
-    output: {
-      file: 'dist/index.esm.js',
-      format: 'es',
-      sourcemap: true
-    },
-    plugins: [
-      resolve(),
-      commonjs(),
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: true,
-        declarationDir: 'dist',
-        outDir: 'dist'
-      })
-    ],
-    external: ['@muprotocol/core', '@muprotocol/types', 'ws']
-  },
-  // CommonJS build
-  {
-    input: 'src/index.ts',
-    output: {
+export default {
+  input: 'src/index.ts',
+  output: [
+    {
       file: 'dist/index.js',
       format: 'cjs',
       sourcemap: true
     },
-    plugins: [
-      resolve(),
-      commonjs(),
-      typescript({
-        tsconfig: './tsconfig.json',
-        declaration: false
-      })
-    ],
-    external: ['@muprotocol/core', '@muprotocol/types', 'ws']
-  }
-];
-
-export default config;
+    {
+      file: 'dist/index.esm.js',
+      format: 'esm',
+      sourcemap: true
+    }
+  ],
+  external: [
+    '@muprotocol/types',
+    '@muprotocol/core',
+    'ws',
+    'uuid',
+    'eventemitter3',
+    'http',
+    'https',
+    'url',
+    'querystring'
+  ],
+  plugins: [
+    typescript({
+      typescript: require('typescript'),
+      tsconfig: './tsconfig.json',
+      check: false,
+      useTsconfigDeclarationDir: true
+    })
+  ]
+};

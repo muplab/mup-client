@@ -1,10 +1,19 @@
-// MUP Client SDK
+/**
+ * MUP Client SDK
+ * Client-side implementation for MUP protocol v1
+ */
 
-export * from './client';
-export * from './renderer';
-export * from './event-manager';
-export * from './state-manager';
+// Export main client class
+export { MUPClient } from './client';
 
-// Re-export core and types
-export * from '@muprotocol/core';
-export * from '@muprotocol/types';
+// Export event management
+export { EventManager } from './event-manager';
+
+// Export rendering utilities
+export { MUPRenderer } from './renderer';
+
+// Export state management
+export { StateManager } from './state-manager';
+
+// Note: Avoid re-exporting to prevent circular dependencies
+// Import specific types as needed in your application

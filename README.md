@@ -1,4 +1,4 @@
-# MUP SDK
+# MUP SDK v1.0.0
 
 **Model UI Protocol (MUP) SDK** - A comprehensive TypeScript/JavaScript SDK for implementing the MUP protocol, enabling dynamic UI generation and interaction between AI models and client applications.
 
@@ -16,6 +16,15 @@ This is a monorepo containing four main packages:
 - **@muprotocol/server** - Server-side SDK for creating MUP-compatible servers
 
 ## Features
+
+- 🚀 **Full TypeScript Support** - Complete type definitions and IntelliSense
+- 🔄 **Real-time Communication** - WebSocket-based bidirectional messaging
+- 🎨 **Dynamic UI Components** - Flexible component system with rendering support
+- 🛡️ **Built-in Validation** - Message and component validation
+- 📦 **Modular Architecture** - Separate packages for different use cases
+- 🔧 **Extensible** - Plugin system and custom renderers
+- 📊 **State Management** - Built-in state management with persistence
+- 🔐 **Session Management** - Secure session handling with TTL support
 
 ### Core Features
 - ✅ WebSocket-based communication

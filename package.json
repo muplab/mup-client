@@ -1,19 +1,29 @@
 {
   "name": "mup-sdk",
-  "version": "0.1.0",
-  "description": "Model UI Protocol (MUP) SDK - Core implementation and packages",
+  "version": "0.3.0",
+  "description": "Model UI Protocol (MUP) SDK v1.0.0 - Core implementation and packages",
   "private": true,
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
     "build": "lerna run build",
+    "build:types": "lerna run build --scope=@muprotocol/types",
+    "build:core": "lerna run build --scope=@muprotocol/core",
+    "build:client": "lerna run build --scope=@muprotocol/client",
+    "build:server": "lerna run build --scope=@muprotocol/server",
     "test": "lerna run test",
+    "test:watch": "lerna run test:watch --parallel",
     "lint": "eslint packages/*/src/**/*.ts",
+    "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "clean": "lerna run clean",
     "bootstrap": "lerna bootstrap",
     "publish": "lerna publish",
-    "dev": "lerna run dev --parallel"
+    "dev": "lerna run dev --parallel",
+    "install:all": "npm install && lerna bootstrap",
+    "version:patch": "lerna version patch",
+    "version:minor": "lerna version minor",
+    "version:major": "lerna version major"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.0",

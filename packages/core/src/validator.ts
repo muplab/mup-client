@@ -1,547 +1,329 @@
+/**
+ * MUP Validator
+ * Validation utilities for MUP protocol v1 messages and components
+ */
+
 import {
-  ButtonProps,
+  UIRequest,
+  UIResponse,
+  EventTrigger,
+  ErrorMessage,
   Component,
-  ContainerProps,
-  FormProps,
-  InputProps,
-  MUPMessage,
-  MUP_VERSION,
-  TextProps,
-  ValidationRules
+  ComponentType,
+  ComponentConstraints,
+  MessageType
 } from '@muprotocol/types';
-import { ErrorFactory, ValidationError } from './errors';
 
 /**
- * Validation result interface
+ * Validation error class
  */
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-  warnings?: string[];
+export class ValidationError extends Error {
+  constructor(message: string, public code: string = 'VALIDATION_ERROR') {
+    super(message);
+    this.name = 'ValidationError';
+  }
 }
 
 /**
- * Schema validator for MUP protocol
+ * MUP validator class
  */
 export class MUPValidator {
-  private static readonly MAX_COMPONENT_DEPTH = 20;
-  private static readonly MAX_COMPONENT_COUNT = 1000;
-  private static readonly MAX_MESSAGE_SIZE = 10 * 1024 * 1024; // 10MB
-
   /**
-   * Validate MUP message structure
+   * Validate a MUP message
+   * @param message - Message to validate
+   * @throws ValidationError if message is invalid
    */
-  static validateMessage(message: any): ValidationResult {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    // Check if message is an object
-    if (!message || typeof message !== 'object') {
-      errors.push('Message must be an object');
-      return { valid: false, errors, warnings };
-    }
-
-    // Check for mup wrapper
-    if (!message.mup) {
-      errors.push('Message must have "mup" property');
-      return { valid: false, errors, warnings };
-    }
-
-    const { mup } = message;
-
-    // Validate required fields
-    const requiredFields = [
-      'version',
-      'message_id',
-      'timestamp',
-      'message_type',
-      'source',
-      'target',
-      'payload'
-    ];
-
-    for (const field of requiredFields) {
-      if (!(field in mup)) {
-        errors.push(`Missing required field: ${field}`);
-      }
-    }
-
+  static validateMessage(
+    message: UIRequest | UIResponse | EventTrigger | ErrorMessage
+  ): void {
     // Validate version
-    if (mup.version && typeof mup.version === 'string') {
-      if (!this.isValidVersion(mup.version)) {
-        errors.push(`Invalid version format: ${mup.version}`);
-      }
-      if (mup.version !== MUP_VERSION) {
-        warnings.push(`Version mismatch: expected ${MUP_VERSION}, got ${mup.version}`);
-      }
+    if (!message.version || typeof message.version !== 'string') {
+      throw new ValidationError('Invalid or missing version', 'INVALID_VERSION');
     }
 
-    // Validate message_id
-    if (mup.message_id && typeof mup.message_id !== 'string') {
-      errors.push('message_id must be a string');
+    // Validate message ID
+    if (!message.message_id || typeof message.message_id !== 'string') {
+      throw new ValidationError('Invalid or missing message_id', 'INVALID_MESSAGE_ID');
     }
 
     // Validate timestamp
-    if (mup.timestamp && typeof mup.timestamp === 'string') {
-      if (!this.isValidTimestamp(mup.timestamp)) {
-        errors.push(`Invalid timestamp format: ${mup.timestamp}`);
+    if (!message.timestamp || typeof message.timestamp !== 'string') {
+      throw new ValidationError('Invalid or missing timestamp', 'INVALID_TIMESTAMP');
+    }
+
+    // Validate timestamp format
+    try {
+      const date = new Date(message.timestamp);
+      if (isNaN(date.getTime())) {
+        throw new ValidationError('Invalid timestamp format', 'INVALID_TIMESTAMP_FORMAT');
       }
+    } catch {
+      throw new ValidationError('Invalid timestamp format', 'INVALID_TIMESTAMP_FORMAT');
     }
 
-    // Validate message_type
-    if (mup.message_type && !this.isValidMessageType(mup.message_type)) {
-      errors.push(`Invalid message_type: ${mup.message_type}`);
+    // Validate message type
+    if (!this.isValidMessageType(message.type)) {
+      throw new ValidationError('Invalid message type', 'INVALID_MESSAGE_TYPE');
     }
 
-    // Validate source and target
-    if (mup.source) {
-      const sourceErrors = this.validateEndpoint(mup.source, 'source');
-      errors.push(...sourceErrors);
+    // Validate payload
+    if (!message.payload || typeof message.payload !== 'object') {
+      throw new ValidationError('Invalid or missing payload', 'INVALID_PAYLOAD');
     }
 
-    if (mup.target) {
-      const targetErrors = this.validateEndpoint(mup.target, 'target');
-      errors.push(...targetErrors);
+    // Type-specific validation
+    switch (message.type) {
+      case 'ui_request':
+        this.validateUIRequestPayload((message as UIRequest).payload);
+        break;
+      case 'ui_response':
+        this.validateUIResponsePayload((message as UIResponse).payload);
+        break;
+      case 'event_trigger':
+        this.validateEventTriggerPayload((message as EventTrigger).payload);
+        break;
+      case 'error':
+        this.validateErrorPayload((message as ErrorMessage).payload);
+        break;
     }
-
-    // Validate message size
-    const messageSize = JSON.stringify(message).length;
-    if (messageSize > this.MAX_MESSAGE_SIZE) {
-      errors.push(`Message size exceeds limit: ${messageSize} > ${this.MAX_MESSAGE_SIZE}`);
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings
-    };
   }
 
   /**
-   * Validate component structure
+   * Validate UI request payload
+   * @param payload - UI request payload
    */
-  static validateComponent(component: any, depth = 0): ValidationResult {
-    const errors: string[] = [];
-    const warnings: string[] = [];
-
-    // Check depth limit
-    if (depth > this.MAX_COMPONENT_DEPTH) {
-      errors.push(`Component nesting depth exceeds limit: ${depth} > ${this.MAX_COMPONENT_DEPTH}`);
-      return { valid: false, errors, warnings };
+  private static validateUIRequestPayload(payload: any): void {
+    if (!payload.user_input || typeof payload.user_input !== 'string') {
+      throw new ValidationError('Invalid or missing user_input', 'INVALID_USER_INPUT');
     }
 
-    // Check if component is an object
-    if (!component || typeof component !== 'object') {
-      errors.push('Component must be an object');
-      return { valid: false, errors, warnings };
-    }
+    if (payload.context) {
+      if (typeof payload.context !== 'object') {
+        throw new ValidationError('Invalid context format', 'INVALID_CONTEXT');
+      }
 
-    // Validate required fields
-    const requiredFields = ['id', 'type', 'version', 'props'];
-    for (const field of requiredFields) {
-      if (!(field in component)) {
-        errors.push(`Missing required field: ${field}`);
+      if (payload.context.previous_components) {
+        if (!Array.isArray(payload.context.previous_components)) {
+          throw new ValidationError('Invalid previous_components format', 'INVALID_PREVIOUS_COMPONENTS');
+        }
+        payload.context.previous_components.forEach((component: any, index: number) => {
+          try {
+            this.validateComponent(component);
+          } catch (error) {
+            throw new ValidationError(
+              `Invalid component at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+              'INVALID_COMPONENT'
+            );
+          }
+        });
       }
     }
+  }
 
-    // Validate id
-    if (component.id && typeof component.id !== 'string') {
-      errors.push('Component id must be a string');
+  /**
+   * Validate UI response payload
+   * @param payload - UI response payload
+   */
+  private static validateUIResponsePayload(payload: any): void {
+    if (typeof payload.success !== 'boolean') {
+      throw new ValidationError('Invalid or missing success field', 'INVALID_SUCCESS');
     }
 
-    // Validate type
-    if (component.type && !this.isValidComponentType(component.type)) {
-      errors.push(`Invalid component type: ${component.type}`);
+    if (payload.components) {
+      if (!Array.isArray(payload.components)) {
+        throw new ValidationError('Invalid components format', 'INVALID_COMPONENTS');
+      }
+      payload.components.forEach((component: any, index: number) => {
+        try {
+          this.validateComponent(component);
+        } catch (error) {
+          throw new ValidationError(
+            `Invalid component at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            'INVALID_COMPONENT'
+          );
+        }
+      });
     }
 
-    // Validate version
-    if (component.version && !this.isValidVersion(component.version)) {
-      errors.push(`Invalid component version: ${component.version}`);
+    if (payload.error) {
+      if (typeof payload.error !== 'object' ||
+          typeof payload.error.code !== 'string' ||
+          typeof payload.error.message !== 'string') {
+        throw new ValidationError('Invalid error format', 'INVALID_ERROR');
+      }
+    }
+  }
+
+  /**
+   * Validate event trigger payload
+   * @param payload - Event trigger payload
+   */
+  private static validateEventTriggerPayload(payload: any): void {
+    if (!payload.component_id || typeof payload.component_id !== 'string') {
+      throw new ValidationError('Invalid or missing component_id', 'INVALID_COMPONENT_ID');
     }
 
-    // Validate props based on component type
-    if (component.type && component.props) {
-      const propsErrors = this.validateComponentProps(component.type, component.props);
-      errors.push(...propsErrors);
+    if (!payload.event_type || typeof payload.event_type !== 'string') {
+      throw new ValidationError('Invalid or missing event_type', 'INVALID_EVENT_TYPE');
+    }
+  }
+
+  /**
+   * Validate error payload
+   * @param payload - Error payload
+   */
+  private static validateErrorPayload(payload: any): void {
+    if (!payload.code || typeof payload.code !== 'string') {
+      throw new ValidationError('Invalid or missing error code', 'INVALID_ERROR_CODE');
+    }
+
+    if (!payload.message || typeof payload.message !== 'string') {
+      throw new ValidationError('Invalid or missing error message', 'INVALID_ERROR_MESSAGE');
+    }
+  }
+
+  /**
+   * Validate a component
+   * @param component - Component to validate
+   * @param constraints - Optional validation constraints
+   */
+  static validateComponent(
+    component: Component,
+    constraints?: ComponentConstraints
+  ): void {
+    // Validate required fields
+    if (!component.id || typeof component.id !== 'string') {
+      throw new ValidationError('Invalid or missing component id', 'INVALID_COMPONENT_ID');
+    }
+
+    if (!component.type || !this.isValidComponentType(component.type)) {
+      throw new ValidationError('Invalid or missing component type', 'INVALID_COMPONENT_TYPE');
+    }
+
+    if (!component.version || typeof component.version !== 'string') {
+      throw new ValidationError('Invalid or missing component version', 'INVALID_COMPONENT_VERSION');
+    }
+
+    // Validate constraints
+    if (constraints) {
+      if (constraints.allowed_types && !constraints.allowed_types.includes(component.type)) {
+        throw new ValidationError(
+          `Component type '${component.type}' is not allowed`,
+          'FORBIDDEN_COMPONENT_TYPE'
+        );
+      }
+
+      if (constraints.required_props) {
+        for (const prop of constraints.required_props) {
+          if (!component.props || !(prop in component.props)) {
+            throw new ValidationError(
+              `Required property '${prop}' is missing`,
+              'MISSING_REQUIRED_PROP'
+            );
+          }
+        }
+      }
+
+      if (constraints.forbidden_props && component.props) {
+        for (const prop of constraints.forbidden_props) {
+          if (prop in component.props) {
+            throw new ValidationError(
+              `Forbidden property '${prop}' is present`,
+              'FORBIDDEN_PROP_PRESENT'
+            );
+          }
+        }
+      }
     }
 
     // Validate children recursively
-    if (component.children && Array.isArray(component.children)) {
-      let childCount = 0;
-      for (const child of component.children) {
-        childCount++;
-        if (childCount > this.MAX_COMPONENT_COUNT) {
-          errors.push(`Too many child components: ${childCount} > ${this.MAX_COMPONENT_COUNT}`);
-          break;
-        }
-
-        const childResult = this.validateComponent(child, depth + 1);
-        errors.push(...childResult.errors);
-        warnings.push(...(childResult.warnings || []));
+    if (component.children) {
+      if (!Array.isArray(component.children)) {
+        throw new ValidationError('Invalid children format', 'INVALID_CHILDREN');
       }
+
+      if (constraints?.max_children && component.children.length > constraints.max_children) {
+        throw new ValidationError(
+          `Too many children: ${component.children.length} > ${constraints.max_children}`,
+          'TOO_MANY_CHILDREN'
+        );
+      }
+
+      component.children.forEach((child, index) => {
+        try {
+          this.validateComponent(child, constraints);
+        } catch (error) {
+          throw new ValidationError(
+            `Invalid child component at index ${index}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            'INVALID_CHILD_COMPONENT'
+          );
+        }
+      });
     }
 
     // Validate events
     if (component.events) {
-      const eventErrors = this.validateEvents(component.events);
-      errors.push(...eventErrors);
-    }
-
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings
-    };
-  }
-
-  /**
-   * Validate component tree
-   */
-  static validateComponentTree(tree: any): ValidationResult {
-    return this.validateComponent(tree, 0);
-  }
-
-  /**
-   * Validate endpoint structure
-   */
-  private static validateEndpoint(endpoint: any, name: string): string[] {
-    const errors: string[] = [];
-
-    if (!endpoint || typeof endpoint !== 'object') {
-      errors.push(`${name} must be an object`);
-      return errors;
-    }
-
-    if (!endpoint.type || typeof endpoint.type !== 'string') {
-      errors.push(`${name}.type must be a string`);
-    } else if (!['client', 'server'].includes(endpoint.type)) {
-      errors.push(`${name}.type must be 'client' or 'server'`);
-    }
-
-    if (!endpoint.id || typeof endpoint.id !== 'string') {
-      errors.push(`${name}.id must be a string`);
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate component props based on type
-   */
-  private static validateComponentProps(type: string, props: any): string[] {
-    const errors: string[] = [];
-
-    if (!props || typeof props !== 'object') {
-      errors.push('Component props must be an object');
-      return errors;
-    }
-
-    switch (type) {
-    case 'container':
-      errors.push(...this.validateContainerProps(props));
-      break;
-    case 'text':
-      errors.push(...this.validateTextProps(props));
-      break;
-    case 'input':
-      errors.push(...this.validateInputProps(props));
-      break;
-    case 'button':
-      errors.push(...this.validateButtonProps(props));
-      break;
-    case 'form':
-      errors.push(...this.validateFormProps(props));
-      break;
-    default:
-      // For unknown component types, just check that props is an object
-      break;
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate container props
-   */
-  private static validateContainerProps(props: ContainerProps): string[] {
-    const errors: string[] = [];
-
-    if (props.layout && !['flex', 'grid', 'absolute'].includes(props.layout)) {
-      errors.push(`Invalid layout: ${props.layout}`);
-    }
-
-    if (props.direction && !['row', 'column'].includes(props.direction)) {
-      errors.push(`Invalid direction: ${props.direction}`);
-    }
-
-    if (props.justify_content && ![
-      'flex-start', 'center', 'flex-end', 'space-between', 'space-around'
-    ].includes(props.justify_content)) {
-      errors.push(`Invalid justify_content: ${props.justify_content}`);
-    }
-
-    if (props.align_items && ![
-      'flex-start', 'center', 'flex-end', 'stretch'
-    ].includes(props.align_items)) {
-      errors.push(`Invalid align_items: ${props.align_items}`);
-    }
-
-    if (props.spacing !== undefined && (typeof props.spacing !== 'number' || props.spacing < 0)) {
-      errors.push('spacing must be a non-negative number');
-    }
-
-    if (props.padding && (!Array.isArray(props.padding) || props.padding.length !== 4)) {
-      errors.push('padding must be an array of 4 numbers');
-    }
-
-    if (props.margin && (!Array.isArray(props.margin) || props.margin.length !== 4)) {
-      errors.push('margin must be an array of 4 numbers');
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate text props
-   */
-  private static validateTextProps(props: TextProps): string[] {
-    const errors: string[] = [];
-
-    if (!props.content || typeof props.content !== 'string') {
-      errors.push('text content is required and must be a string');
-    }
-
-    if (props.variant && ![
-      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'body', 'caption', 'subtitle'
-    ].includes(props.variant)) {
-      errors.push(`Invalid text variant: ${props.variant}`);
-    }
-
-    if (props.align && !['left', 'center', 'right', 'justify'].includes(props.align)) {
-      errors.push(`Invalid text align: ${props.align}`);
-    }
-
-    if (props.size !== undefined && (typeof props.size !== 'number' || props.size <= 0)) {
-      errors.push('text size must be a positive number');
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate input props
-   */
-  private static validateInputProps(props: InputProps): string[] {
-    const errors: string[] = [];
-
-    if (!props.input_type) {
-      errors.push('input_type is required');
-    } else if (![
-      'text', 'number', 'email', 'password', 'textarea', 'select',
-      'checkbox', 'radio', 'file', 'date', 'time', 'datetime'
-    ].includes(props.input_type)) {
-      errors.push(`Invalid input_type: ${props.input_type}`);
-    }
-
-    if (!props.name || typeof props.name !== 'string') {
-      errors.push('input name is required and must be a string');
-    }
-
-    if (props.validation) {
-      errors.push(...this.validateValidationRules(props.validation));
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate button props
-   */
-  private static validateButtonProps(props: ButtonProps): string[] {
-    const errors: string[] = [];
-
-    if (!props.text || typeof props.text !== 'string') {
-      errors.push('button text is required and must be a string');
-    }
-
-    if (props.variant && ![
-      'primary', 'secondary', 'outline', 'text', 'danger', 'success', 'warning'
-    ].includes(props.variant)) {
-      errors.push(`Invalid button variant: ${props.variant}`);
-    }
-
-    if (props.size && !['small', 'medium', 'large'].includes(props.size)) {
-      errors.push(`Invalid button size: ${props.size}`);
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate form props
-   */
-  private static validateFormProps(props: FormProps): string[] {
-    const errors: string[] = [];
-
-    if (props.method && !['POST', 'GET', 'PUT', 'DELETE'].includes(props.method)) {
-      errors.push(`Invalid form method: ${props.method}`);
-    }
-
-    if (props.validation_mode && ![
-      'onSubmit', 'onChange', 'onBlur'
-    ].includes(props.validation_mode)) {
-      errors.push(`Invalid validation_mode: ${props.validation_mode}`);
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate validation rules
-   */
-  private static validateValidationRules(rules: ValidationRules): string[] {
-    const errors: string[] = [];
-
-    if (rules.min_length !== undefined && (typeof rules.min_length !== 'number' || rules.min_length < 0)) {
-      errors.push('min_length must be a non-negative number');
-    }
-
-    if (rules.max_length !== undefined && (typeof rules.max_length !== 'number' || rules.max_length < 0)) {
-      errors.push('max_length must be a non-negative number');
-    }
-
-    if (rules.min_length !== undefined && rules.max_length !== undefined && rules.min_length > rules.max_length) {
-      errors.push('min_length cannot be greater than max_length');
-    }
-
-    if (rules.pattern && typeof rules.pattern === 'string') {
-      try {
-        new RegExp(rules.pattern);
-      } catch {
-        errors.push('Invalid regex pattern');
-      }
-    }
-
-    return errors;
-  }
-
-  /**
-   * Validate events object
-   */
-  private static validateEvents(events: any): string[] {
-    const errors: string[] = [];
-
-    if (!events || typeof events !== 'object') {
-      errors.push('events must be an object');
-      return errors;
-    }
-
-    for (const [eventName, handler] of Object.entries(events)) {
-      if (!handler || typeof handler !== 'object') {
-        errors.push(`Event handler for ${eventName} must be an object`);
-        continue;
+      if (!Array.isArray(component.events)) {
+        throw new ValidationError('Invalid events format', 'INVALID_EVENTS');
       }
 
-      const handlerObj = handler as any;
-      if (!handlerObj.handler || typeof handlerObj.handler !== 'string') {
-        errors.push(`Event handler for ${eventName} must have a handler string`);
-      }
+      component.events.forEach((event, index) => {
+        if (!event.type || typeof event.type !== 'string') {
+          throw new ValidationError(
+            `Invalid event type at index ${index}`,
+            'INVALID_EVENT_TYPE'
+          );
+        }
+      });
     }
-
-    return errors;
-  }
-
-  /**
-   * Check if version string is valid
-   */
-  private static isValidVersion(version: string): boolean {
-    const versionRegex = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?$/;
-    return versionRegex.test(version);
-  }
-
-  /**
-   * Check if timestamp is valid ISO 8601 format
-   */
-  private static isValidTimestamp(timestamp: string): boolean {
-    const date = new Date(timestamp);
-    return !isNaN(date.getTime()) && date.toISOString() === timestamp;
   }
 
   /**
    * Check if message type is valid
+   * @param type - Message type to check
+   * @returns True if valid
    */
-  private static isValidMessageType(messageType: string): boolean {
-    const validTypes = [
-      'handshake_request',
-      'handshake_response',
-      'capability_query',
-      'component_update',
-      'event_notification',
-      'error',
-      'request',
-      'response',
-      'notification'
-    ];
-    return validTypes.includes(messageType);
+  private static isValidMessageType(type: string): type is MessageType {
+    const validTypes: MessageType[] = ['ui_request', 'ui_response', 'event_trigger', 'error'];
+    return validTypes.includes(type as MessageType);
   }
 
   /**
    * Check if component type is valid
+   * @param type - Component type to check
+   * @returns True if valid
    */
-  private static isValidComponentType(type: string): boolean {
-    const validTypes = [
-      'container',
-      'text',
-      'input',
-      'button',
-      'form',
-      'image',
-      'link',
-      'list',
-      'table',
-      'chart'
+  private static isValidComponentType(type: string): type is ComponentType {
+    const validTypes: ComponentType[] = [
+      'container', 'text', 'button', 'input', 'image',
+      'list', 'card', 'form', 'navigation', 'modal',
+      'table', 'chart', 'custom'
     ];
-    return validTypes.includes(type);
+    return validTypes.includes(type as ComponentType);
   }
-}
 
-/**
- * Validation utility functions
- */
-export class ValidationUtils {
   /**
-   * Validate and throw error if invalid
+   * Validate component tree depth
+   * @param component - Root component
+   * @param maxDepth - Maximum allowed depth
+   * @param currentDepth - Current depth (internal use)
    */
-  static validateOrThrow(validationResult: ValidationResult, context: string) {
-    if (!validationResult.valid) {
+  static validateComponentDepth(
+    component: Component,
+    maxDepth: number,
+    currentDepth: number = 1
+  ): void {
+    if (currentDepth > maxDepth) {
       throw new ValidationError(
-        `Validation failed for ${context}`,
-        { errors: validationResult.errors }
+        `Component tree depth exceeds maximum: ${currentDepth} > ${maxDepth}`,
+        'DEPTH_EXCEEDED'
       );
     }
-  }
 
-  /**
-   * Validate MUP message and throw if invalid
-   */
-  static validateMessageOrThrow(message: any) {
-    const result = MUPValidator.validateMessage(message);
-    this.validateOrThrow(result, 'MUP message');
-  }
-
-  /**
-   * Validate component and throw if invalid
-   */
-  static validateComponentOrThrow(component: any) {
-    const result = MUPValidator.validateComponent(component);
-    this.validateOrThrow(result, 'component');
-  }
-
-  /**
-   * Validate component tree and throw if invalid
-   */
-  static validateComponentTreeOrThrow(tree: any) {
-    const result = MUPValidator.validateComponentTree(tree);
-    this.validateOrThrow(result, 'component tree');
+    if (component.children) {
+      component.children.forEach(child => {
+        this.validateComponentDepth(child, maxDepth, currentDepth + 1);
+      });
+    }
   }
 }

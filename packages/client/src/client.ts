@@ -1,309 +1,403 @@
+/**
+ * MUP Client
+ * Main client class for MUP protocol v1 communication
+ */
+
+import { EventEmitter } from 'eventemitter3';
 import {
-  AuthCredentials,
-  ClientCapabilities,
-  ConnectionState,
-  EndpointType,
-  MUPClientInterface,
-  MUPComponent,
-  MUPEventNotification,
-  MUPMessage,
-  MessageType
+  UIRequest,
+  UIResponse,
+  EventTrigger,
+  ErrorMessage,
+  UIRequestPayload,
+  EventTriggerPayload,
+  Component
 } from '@muprotocol/types';
 import {
-  ErrorCodes,
-  ErrorFactory,
-  MUPUtils,
-  MUPValidator,
   MessageBuilder,
   MessageParser,
-  WebSocketConnection
+  MessageUtils,
+  ValidationError
 } from '@muprotocol/core';
-import { EventManager } from './event-manager';
-import { StateManager } from './state-manager';
-import { ComponentRenderer } from './renderer';
 
-export interface MUPClientConfig {
-  url: string;
-  auth?: AuthCredentials;
-  capabilities?: Partial<ClientCapabilities>;
-  reconnect?: boolean;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
-  timeout?: number;
-  validateMessages?: boolean;
+/**
+ * Client configuration options
+ */
+export interface ClientConfig {
+  url: string;                    // Server URL
+  reconnectAttempts?: number;     // Maximum reconnection attempts
+  reconnectDelay?: number;        // Delay between reconnection attempts (ms)
+  heartbeatInterval?: number;     // Heartbeat interval (ms)
+  requestTimeout?: number;        // Request timeout (ms)
+  autoReconnect?: boolean;        // Enable automatic reconnection
 }
 
-export interface MUPClientEvents {
+/**
+ * Connection state
+ */
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+
+/**
+ * Client event types
+ */
+export interface ClientEvents {
   connected: () => void;
   disconnected: (reason?: string) => void;
   error: (error: Error) => void;
-  component_update: (component: MUPComponent) => void;
-  handshake_complete: (serverCapabilities: any) => void;
-  reconnecting: (attempt: number) => void;
-  reconnect_failed: () => void;
+  message: (message: UIResponse | EventTrigger | ErrorMessage) => void;
+  ui_response: (response: UIResponse) => void;
+  event_trigger: (event: EventTrigger) => void;
+  error_message: (error: ErrorMessage) => void;
+  state_change: (state: ConnectionState) => void;
 }
 
-export class MUPClient implements MUPClientInterface {
-  private connection: WebSocketConnection;
-  private eventManager: EventManager;
-  private stateManager: StateManager;
-  private renderer: ComponentRenderer;
-  private messageBuilder: MessageBuilder;
-  private messageParser: MessageParser;
-  private validator: MUPValidator;
-  private config: Required<MUPClientConfig>;
-  private isHandshakeComplete = false;
-  private serverCapabilities: any = null;
-  private reconnectAttempts = 0;
-  private reconnectTimer?: NodeJS.Timeout;
+/**
+ * Request options
+ */
+export interface RequestOptions {
+  timeout?: number;               // Request timeout (ms)
+  retries?: number;               // Number of retries
+}
 
-  constructor(config: MUPClientConfig) {
+/**
+ * Pending request
+ */
+interface PendingRequest {
+  resolve: (response: UIResponse) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+  retries: number;
+}
+
+/**
+ * MUP Client implementation
+ */
+export class MUPClient extends EventEmitter<ClientEvents> {
+  private config: Required<ClientConfig>;
+  private ws: WebSocket | null = null;
+  private state: ConnectionState = 'disconnected';
+  private pendingRequests = new Map<string, PendingRequest>();
+  private reconnectAttempt = 0;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+
+  constructor(config: ClientConfig) {
+    super();
+    
     this.config = {
-      reconnect: true,
-      reconnectInterval: 5000,
-      maxReconnectAttempts: 10,
-      timeout: 30000,
-      validateMessages: true,
-      capabilities: {
-        version: '1.0.0',
-        supported_components: ['container', 'text', 'input', 'button', 'form'],
-        supported_events: ['click', 'change', 'submit', 'focus', 'blur'],
-        max_component_depth: 10,
-        max_components_per_update: 100
-      },
+      reconnectAttempts: 5,
+      reconnectDelay: 1000,
+      heartbeatInterval: 30000,
+      requestTimeout: 10000,
+      autoReconnect: true,
       ...config
     };
-
-    this.connection = new WebSocketConnection(this.config.url, {
-      timeout: this.config.timeout
-    });
-    this.eventManager = new EventManager();
-    this.stateManager = new StateManager();
-    this.renderer = new ComponentRenderer();
-    this.messageBuilder = new MessageBuilder();
-    this.messageParser = new MessageParser();
-    this.validator = new MUPValidator();
-
-    this.setupConnectionHandlers();
   }
 
-  private setupConnectionHandlers(): void {
-    this.connection.on('connected', () => {
-      this.reconnectAttempts = 0;
-      this.clearReconnectTimer();
-      this.performHandshake();
-    });
+  /**
+   * Connect to the MUP server
+   * @returns Promise that resolves when connected
+   */
+  async connect(): Promise<void> {
+    if (this.state === 'connected' || this.state === 'connecting') {
+      return;
+    }
 
-    this.connection.on('disconnected', (reason) => {
-      this.isHandshakeComplete = false;
-      this.serverCapabilities = null;
-      this.eventManager.emit('disconnected', reason);
-      
-      if (this.config.reconnect && this.reconnectAttempts < this.config.maxReconnectAttempts) {
-        this.scheduleReconnect();
-      } else if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
-        this.eventManager.emit('reconnect_failed');
+    this.setState('connecting');
+
+    return new Promise((resolve, reject) => {
+      try {
+        this.ws = new WebSocket(this.config.url);
+
+        this.ws.onopen = () => {
+          this.setState('connected');
+          this.reconnectAttempt = 0;
+          this.startHeartbeat();
+          this.emit('connected');
+          resolve();
+        };
+
+        this.ws.onmessage = (event) => {
+          this.handleMessage(event.data);
+        };
+
+        this.ws.onclose = (event) => {
+          this.handleDisconnection(event.reason);
+        };
+
+        this.ws.onerror = (event) => {
+          const error = new Error('WebSocket connection error');
+          this.handleError(error);
+          reject(error);
+        };
+
+      } catch (error) {
+        this.setState('error');
+        const connectionError = error instanceof Error ? error : new Error('Connection failed');
+        this.handleError(connectionError);
+        reject(connectionError);
       }
     });
-
-    this.connection.on('message', (data) => {
-      this.handleMessage(data);
-    });
-
-    this.connection.on('error', (error) => {
-      this.eventManager.emit('error', error);
-    });
   }
 
-  private scheduleReconnect(): void {
-    this.clearReconnectTimer();
-    this.reconnectAttempts++;
+  /**
+   * Disconnect from the MUP server
+   */
+  disconnect(): void {
+    this.config.autoReconnect = false;
+    this.stopHeartbeat();
+    this.stopReconnectTimer();
     
-    this.eventManager.emit('reconnecting', this.reconnectAttempts);
+    if (this.ws) {
+      this.ws.close(1000, 'Client disconnect');
+      this.ws = null;
+    }
     
-    this.reconnectTimer = setTimeout(() => {
-      this.connection.connect();
-    }, this.config.reconnectInterval * Math.pow(1.5, this.reconnectAttempts - 1));
+    this.setState('disconnected');
+    this.rejectPendingRequests(new Error('Client disconnected'));
   }
 
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = undefined;
+  /**
+   * Send a UI request
+   * @param payload - UI request payload
+   * @param options - Request options
+   * @returns Promise that resolves with the UI response
+   */
+  async sendUIRequest(
+    payload: UIRequestPayload,
+    options: RequestOptions = {}
+  ): Promise<UIResponse> {
+    if (this.state !== 'connected') {
+      throw new Error('Client is not connected');
     }
+
+    const request = MessageBuilder.createUIRequest(payload);
+    const timeout = options.timeout || this.config.requestTimeout;
+    const retries = options.retries || 0;
+
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.pendingRequests.delete(request.message_id);
+        reject(new Error('Request timeout'));
+      }, timeout);
+
+      this.pendingRequests.set(request.message_id, {
+        resolve,
+        reject,
+        timeout: timeoutId,
+        retries
+      });
+
+      try {
+        const message = MessageParser.serialize(request);
+        this.ws!.send(message);
+      } catch (error) {
+        this.pendingRequests.delete(request.message_id);
+        clearTimeout(timeoutId);
+        reject(error instanceof Error ? error : new Error('Failed to send request'));
+      }
+    });
   }
 
-  private async performHandshake(): Promise<void> {
-    try {
-      const handshakeMessage = this.messageBuilder.createHandshakeRequest(
-        this.config.capabilities as ClientCapabilities,
-        this.config.auth
-      );
-
-      await this.connection.send(handshakeMessage);
-    } catch (error) {
-      this.eventManager.emit('error', ErrorFactory.createConnectionError(
-        'Failed to send handshake',
-        error instanceof Error ? error : new Error(String(error))
-      ));
+  /**
+   * Send an event trigger
+   * @param payload - Event trigger payload
+   */
+  sendEventTrigger(payload: EventTriggerPayload): void {
+    if (this.state !== 'connected') {
+      throw new Error('Client is not connected');
     }
+
+    const event = MessageBuilder.createEventTrigger(payload);
+    const message = MessageParser.serialize(event);
+    this.ws!.send(message);
   }
 
+  /**
+   * Get current connection state
+   * @returns Current connection state
+   */
+  getState(): ConnectionState {
+    return this.state;
+  }
+
+  /**
+   * Check if client is connected
+   * @returns True if connected
+   */
+  isConnected(): boolean {
+    return this.state === 'connected';
+  }
+
+  /**
+   * Get client configuration
+   * @returns Client configuration
+   */
+  getConfig(): Readonly<Required<ClientConfig>> {
+    return { ...this.config };
+  }
+
+  /**
+   * Get connection statistics
+   * @returns Connection statistics
+   */
+  getStats(): {
+    state: ConnectionState;
+    pendingRequests: number;
+    reconnectAttempt: number;
+    uptime?: number;
+  } {
+    return {
+      state: this.state,
+      pendingRequests: this.pendingRequests.size,
+      reconnectAttempt: this.reconnectAttempt
+    };
+  }
+
+  /**
+   * Handle incoming message
+   * @param data - Raw message data
+   */
   private handleMessage(data: string): void {
     try {
-      const message = this.messageParser.parse(data);
+      const message = MessageParser.parse(data);
       
-      if (this.config.validateMessages && !this.validator.validateMessage(message)) {
-        throw ErrorFactory.createValidationError('Invalid message format');
+      // Emit general message event
+      this.emit('message', message);
+
+      // Handle specific message types
+      if (MessageUtils.isResponse(message)) {
+        this.handleUIResponse(message);
+      } else if (MessageUtils.isEventTrigger(message)) {
+        this.emit('event_trigger', message);
+      } else if (MessageUtils.isError(message)) {
+        this.emit('error_message', message);
       }
 
-      switch (message.type) {
-      case MessageType.HANDSHAKE_RESPONSE:
-        this.handleHandshakeResponse(message);
-        break;
-      case MessageType.COMPONENT_UPDATE:
-        this.handleComponentUpdate(message);
-        break;
-      case MessageType.ERROR:
-        this.handleError(message);
-        break;
-      default:
-        console.warn('Unknown message type:', message.type);
-      }
     } catch (error) {
-      this.eventManager.emit('error', error instanceof Error ? error : new Error(String(error)));
+      const parseError = error instanceof Error ? error : new Error('Message parsing failed');
+      this.handleError(parseError);
     }
   }
 
-  private handleHandshakeResponse(message: MUPMessage): void {
-    if (message.payload?.success) {
-      this.isHandshakeComplete = true;
-      this.serverCapabilities = message.payload.server_capabilities;
-      this.eventManager.emit('connected');
-      this.eventManager.emit('handshake_complete', this.serverCapabilities);
+  /**
+   * Handle UI response
+   * @param response - UI response message
+   */
+  private handleUIResponse(response: UIResponse): void {
+    this.emit('ui_response', response);
+
+    // Resolve pending request if exists
+    const pending = this.pendingRequests.get(response.message_id);
+    if (pending) {
+      clearTimeout(pending.timeout);
+      this.pendingRequests.delete(response.message_id);
+      pending.resolve(response);
+    }
+  }
+
+  /**
+   * Handle disconnection
+   * @param reason - Disconnection reason
+   */
+  private handleDisconnection(reason?: string): void {
+    this.stopHeartbeat();
+    this.ws = null;
+    
+    if (this.state === 'connected') {
+      this.emit('disconnected', reason);
+    }
+
+    if (this.config.autoReconnect && this.reconnectAttempt < this.config.reconnectAttempts) {
+      this.setState('reconnecting');
+      this.scheduleReconnect();
     } else {
-      const error = ErrorFactory.createAuthenticationError(
-        message.payload?.error || 'Handshake failed'
-      );
-      this.eventManager.emit('error', error);
+      this.setState('disconnected');
+      this.rejectPendingRequests(new Error('Connection lost'));
     }
   }
 
-  private handleComponentUpdate(message: MUPMessage): void {
-    if (!this.isHandshakeComplete) {
-      console.warn('Received component update before handshake completion');
-      return;
+  /**
+   * Handle error
+   * @param error - Error that occurred
+   */
+  private handleError(error: Error): void {
+    this.emit('error', error);
+  }
+
+  /**
+   * Set connection state
+   * @param newState - New connection state
+   */
+  private setState(newState: ConnectionState): void {
+    if (this.state !== newState) {
+      this.state = newState;
+      this.emit('state_change', newState);
     }
+  }
 
-    const component = message.payload?.component;
-    if (!component) {
-      this.eventManager.emit('error', ErrorFactory.createValidationError(
-        'Component update missing component data'
-      ));
-      return;
+  /**
+   * Start heartbeat timer
+   */
+  private startHeartbeat(): void {
+    this.stopHeartbeat();
+    
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        // Send ping frame or heartbeat message
+        this.ws.ping?.();
+      }
+    }, this.config.heartbeatInterval);
+  }
+
+  /**
+   * Stop heartbeat timer
+   */
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
+  }
 
-    if (this.config.validateMessages && !this.validator.validateComponent(component)) {
-      this.eventManager.emit('error', ErrorFactory.createValidationError(
-        'Invalid component structure'
-      ));
-      return;
+  /**
+   * Schedule reconnection attempt
+   */
+  private scheduleReconnect(): void {
+    this.stopReconnectTimer();
+    
+    const delay = this.config.reconnectDelay * Math.pow(2, this.reconnectAttempt);
+    
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectAttempt++;
+      
+      try {
+        await this.connect();
+      } catch (error) {
+        // Reconnection failed, will be handled by handleDisconnection
+      }
+    }, delay);
+  }
+
+  /**
+   * Stop reconnection timer
+   */
+  private stopReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
-
-    this.stateManager.updateComponent(component);
-    this.eventManager.emit('component_update', component);
   }
 
-  private handleError(message: MUPMessage): void {
-    const errorPayload = message.payload;
-    const error = ErrorFactory.createProtocolError(
-      errorPayload?.message || 'Server error',
-      errorPayload?.code || ErrorCodes.UNKNOWN_ERROR
-    );
-    this.eventManager.emit('error', error);
-  }
-
-  // Public API
-  async connect(): Promise<void> {
-    return this.connection.connect();
-  }
-
-  async disconnect(): Promise<void> {
-    this.clearReconnectTimer();
-    this.isHandshakeComplete = false;
-    this.serverCapabilities = null;
-    return this.connection.disconnect();
-  }
-
-  async sendEvent(componentId: string, eventType: string, eventData?: any): Promise<void> {
-    if (!this.isHandshakeComplete) {
-      throw ErrorFactory.createConnectionError('Not connected to server');
+  /**
+   * Reject all pending requests
+   * @param error - Error to reject with
+   */
+  private rejectPendingRequests(error: Error): void {
+    for (const [messageId, pending] of this.pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(error);
     }
-
-    const eventMessage = this.messageBuilder.createEventNotification({
-      component_id: componentId,
-      event_type: eventType,
-      event_data: eventData,
-      timestamp: Date.now()
-    });
-
-    return this.connection.send(eventMessage);
-  }
-
-  getComponent(componentId: string): MUPComponent | null {
-    return this.stateManager.getComponent(componentId);
-  }
-
-  getAllComponents(): MUPComponent[] {
-    return this.stateManager.getAllComponents();
-  }
-
-  getComponentTree(): MUPComponent | null {
-    return this.stateManager.getComponentTree();
-  }
-
-  renderComponent(component: MUPComponent, container?: HTMLElement): HTMLElement {
-    return this.renderer.render(component, container);
-  }
-
-  renderComponentTree(container?: HTMLElement): HTMLElement | null {
-    const tree = this.getComponentTree();
-    if (!tree) return null;
-    return this.renderer.render(tree, container);
-  }
-
-  on<K extends keyof MUPClientEvents>(event: K, listener: MUPClientEvents[K]): void {
-    this.eventManager.on(event, listener);
-  }
-
-  off<K extends keyof MUPClientEvents>(event: K, listener: MUPClientEvents[K]): void {
-    this.eventManager.off(event, listener);
-  }
-
-  once<K extends keyof MUPClientEvents>(event: K, listener: MUPClientEvents[K]): void {
-    this.eventManager.once(event, listener);
-  }
-
-  getConnectionState(): ConnectionState {
-    return this.connection.getState();
-  }
-
-  isConnected(): boolean {
-    return this.connection.getState() === ConnectionState.CONNECTED && this.isHandshakeComplete;
-  }
-
-  getServerCapabilities(): any {
-    return this.serverCapabilities;
-  }
-
-  getClientCapabilities(): ClientCapabilities {
-    return this.config.capabilities as ClientCapabilities;
-  }
-
-  destroy(): void {
-    this.clearReconnectTimer();
-    this.connection.disconnect();
-    this.eventManager.removeAllListeners();
-    this.stateManager.clear();
+    this.pendingRequests.clear();
   }
 }

@@ -1,499 +1,515 @@
-import * as WebSocket from 'ws';
-import { IncomingMessage } from 'http';
+/**
+ * MUP WebSocket Server
+ * Server-side implementation for MUP protocol v1
+ */
+
+import { WebSocketServer, WebSocket } from 'ws';
+import { EventEmitter } from 'eventemitter3';
+import { v4 as uuidv4 } from 'uuid';
 import {
-  AuthCredentials,
-  EndpointType,
-  MUPComponent,
-  MUPEventNotification,
   MUPMessage,
-  MUPServerInterface,
-  MessageType,
-  ServerCapabilities
+  UIRequest,
+  UIResponse,
+  EventTrigger,
+  ErrorMessage,
+  MessageType
 } from '@muprotocol/types';
 import {
-  ErrorCodes,
-  ErrorFactory,
-  MUPUtils,
-  MUPValidator,
+  MessageParser,
   MessageBuilder,
-  MessageParser
+  MUPValidator
 } from '@muprotocol/core';
-import { ComponentManager } from './component-manager';
-import { Session, SessionManager } from './session-manager';
-import { Middleware, MiddlewareManager } from './middleware';
 
-export interface MUPServerConfig {
-  port?: number;
-  host?: string;
-  path?: string;
-  capabilities?: Partial<ServerCapabilities>;
-  auth?: {
-    required: boolean;
-    validator?: (credentials: AuthCredentials) => Promise<boolean>;
+/**
+ * Client connection information
+ */
+export interface ClientConnection {
+  id: string;
+  socket: WebSocket;
+  isAlive: boolean;
+  lastSeen: number;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Server configuration
+ */
+export interface ServerConfig {
+  port?: number;                    // Server port
+  host?: string;                   // Server host
+  path?: string;                   // WebSocket path
+  pingInterval?: number;           // Ping interval in ms
+  pingTimeout?: number;            // Ping timeout in ms
+  maxConnections?: number;         // Maximum connections
+  enableCompression?: boolean;     // Enable compression
+  enableValidation?: boolean;      // Enable message validation
+  cors?: {
+    origin?: string | string[];
+    credentials?: boolean;
   };
-  validateMessages?: boolean;
-  maxMessageSize?: number;
-  pingInterval?: number;
-  pingTimeout?: number;
 }
 
-export interface MUPServerEvents {
-  started: () => void;
-  stopped: () => void;
-  error: (error: Error) => void;
-  client_connected: (session: Session) => void;
-  client_disconnected: (session: Session, reason?: string) => void;
-  client_event: (session: Session, event: MUPEventNotification) => void;
-  handshake_request: (session: Session, message: MUPMessage) => void;
-  handshake_complete: (session: Session) => void;
-  handshake_failed: (session: Session, reason: string) => void;
+/**
+ * Server events
+ */
+export interface ServerEvents {
+  'client:connect': (client: ClientConnection) => void;
+  'client:disconnect': (clientId: string, reason: string) => void;
+  'client:error': (clientId: string, error: Error) => void;
+  'message:received': (clientId: string, message: MUPMessage) => void;
+  'message:sent': (clientId: string, message: MUPMessage) => void;
+  'ui:request': (clientId: string, request: UIRequest) => void;
+  'event:trigger': (clientId: string, event: EventTrigger) => void;
+  'server:start': (port: number) => void;
+  'server:stop': () => void;
+  'server:error': (error: Error) => void;
 }
 
-export class MUPServer implements MUPServerInterface {
-  private server?: WebSocket.Server;
-  private messageBuilder: MessageBuilder;
-  private messageParser: MessageParser;
+/**
+ * Request handler function
+ */
+export type RequestHandler = (
+  clientId: string,
+  request: UIRequest
+) => Promise<UIResponse> | UIResponse;
+
+/**
+ * Event handler function
+ */
+export type EventHandler = (
+  clientId: string,
+  event: EventTrigger
+) => Promise<void> | void;
+
+/**
+ * MUP WebSocket server
+ */
+export class MUPServer extends EventEmitter<ServerEvents> {
+  private wss: WebSocketServer | null = null;
+  private clients = new Map<string, ClientConnection>();
+  private requestHandlers = new Map<string, RequestHandler>();
+  private eventHandlers = new Map<string, EventHandler>();
+  private config: Required<ServerConfig>;
   private validator: MUPValidator;
-  private componentManager: ComponentManager;
-  private sessionManager: SessionManager;
-  private middlewareManager: MiddlewareManager;
-  private config: Required<MUPServerConfig>;
-  private pingIntervalId?: NodeJS.Timeout;
+  private pingInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
 
-  constructor(config: MUPServerConfig = {}) {
+  constructor(config: ServerConfig = {}) {
+    super();
+    
     this.config = {
-      port: 3000,
-      host: 'localhost',
-      path: '/mup',
-      capabilities: {
-        version: '1.0.0',
-        supported_components: ['container', 'text', 'input', 'button', 'form'],
-        supported_events: ['click', 'change', 'submit', 'focus', 'blur'],
-        max_component_depth: 10,
-        max_components_per_update: 100
-      },
-      auth: {
-        required: false
-      },
-      validateMessages: true,
-      maxMessageSize: 1024 * 1024, // 1MB
-      pingInterval: 30000, // 30 seconds
-      pingTimeout: 5000, // 5 seconds
-      ...config
+      port: config.port ?? 8080,
+      host: config.host ?? 'localhost',
+      path: config.path ?? '/mup',
+      pingInterval: config.pingInterval ?? 30000,
+      pingTimeout: config.pingTimeout ?? 5000,
+      maxConnections: config.maxConnections ?? 1000,
+      enableCompression: config.enableCompression ?? true,
+      enableValidation: config.enableValidation ?? true,
+      cors: config.cors ?? { origin: '*', credentials: false }
     };
 
-    this.messageBuilder = new MessageBuilder();
-    this.messageParser = new MessageParser();
     this.validator = new MUPValidator();
-    this.componentManager = new ComponentManager();
-    this.sessionManager = new SessionManager();
-    this.middlewareManager = new MiddlewareManager();
   }
 
   /**
-   * Start the MUP server
+   * Start the server
+   * @returns Promise that resolves when server starts
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      return;
+      throw new Error('Server is already running');
     }
 
-    this.server = new WebSocket.Server({
-      port: this.config.port,
-      host: this.config.host,
-      path: this.config.path
+    return new Promise((resolve, reject) => {
+      try {
+        this.wss = new WebSocketServer({
+          port: this.config.port,
+          host: this.config.host,
+          path: this.config.path,
+          perMessageDeflate: this.config.enableCompression
+        });
+
+        this.wss.on('connection', this.handleConnection.bind(this));
+        this.wss.on('error', (error) => {
+          this.emit('server:error', error);
+          reject(error);
+        });
+
+        this.wss.on('listening', () => {
+          this.isRunning = true;
+          this.startPingInterval();
+          this.emit('server:start', this.config.port);
+          resolve();
+        });
+
+      } catch (error) {
+        reject(error);
+      }
     });
-
-    this.server.on('connection', this.handleConnection.bind(this));
-    this.server.on('error', this.handleServerError.bind(this));
-
-    this.startPingInterval();
-    this.isRunning = true;
-
-    this.sessionManager.emit('started');
   }
 
   /**
-   * Stop the MUP server
+   * Stop the server
+   * @returns Promise that resolves when server stops
    */
   async stop(): Promise<void> {
-    if (!this.isRunning || !this.server) {
+    if (!this.isRunning || !this.wss) {
       return;
     }
 
-    this.stopPingInterval();
+    return new Promise((resolve) => {
+      // Stop ping interval
+      if (this.pingInterval) {
+        clearInterval(this.pingInterval);
+        this.pingInterval = null;
+      }
 
-    // Close all client connections
-    this.sessionManager.getAllSessions().forEach(session => {
-      session.disconnect('Server shutdown');
-    });
+      // Close all client connections
+      for (const client of this.clients.values()) {
+        client.socket.close(1000, 'Server shutting down');
+      }
+      this.clients.clear();
 
-    // Close the server
-    await new Promise<void>((resolve, reject) => {
-      if (!this.server) {
+      // Close server
+      this.wss!.close(() => {
+        this.isRunning = false;
+        this.wss = null;
+        this.emit('server:stop');
         resolve();
-        return;
-      }
-
-      this.server.close(err => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
       });
     });
-
-    this.server = undefined;
-    this.isRunning = false;
-
-    this.sessionManager.emit('stopped');
   }
 
   /**
-   * Handle a new WebSocket connection
+   * Send message to specific client
+   * @param clientId - Client ID
+   * @param message - Message to send
+   * @returns True if message was sent
    */
-  private handleConnection(socket: WebSocket, request: IncomingMessage): void {
-    const session = this.sessionManager.createSession(socket, request);
+  sendToClient(clientId: string, message: MUPMessage): boolean {
+    const client = this.clients.get(clientId);
+    if (!client || client.socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
 
-    socket.on('message', (data: WebSocket.Data) => {
-      this.handleMessage(session, data);
-    });
-
-    socket.on('close', (code: number, reason: string) => {
-      this.sessionManager.removeSession(session.id);
-      this.sessionManager.emit('client_disconnected', session, reason || `Code: ${code}`);
-    });
-
-    socket.on('error', (error: Error) => {
-      this.sessionManager.emit('error', error);
-    });
-
-    this.sessionManager.emit('client_connected', session);
-  }
-
-  /**
-   * Handle a message from a client
-   */
-  private async handleMessage(session: Session, data: WebSocket.Data): Promise<void> {
     try {
-      // Check message size
-      if (data.toString().length > this.config.maxMessageSize) {
-        throw ErrorFactory.createValidationError(
-          `Message exceeds maximum size of ${this.config.maxMessageSize} bytes`
-        );
-      }
-
-      // Parse the message
-      const message = this.messageParser.parse(data.toString());
-
-      // Validate the message
-      if (this.config.validateMessages && !this.validator.validateMessage(message)) {
-        throw ErrorFactory.createValidationError('Invalid message format');
-      }
-
-      // Process the message through middleware
-      const processedMessage = await this.middlewareManager.processIncoming(message, session);
-      if (!processedMessage) {
-        // Message was handled by middleware
-        return;
-      }
-
-      // Handle the message based on its type
-      switch (processedMessage.type) {
-      case MessageType.HANDSHAKE_REQUEST:
-        await this.handleHandshakeRequest(session, processedMessage);
-        break;
-      case MessageType.EVENT_NOTIFICATION:
-        await this.handleEventNotification(session, processedMessage);
-        break;
-      case MessageType.COMPONENT_AVAILABILITY:
-        await this.handleComponentAvailability(session, processedMessage);
-        break;
-      default:
-        throw ErrorFactory.createValidationError(`Unsupported message type: ${processedMessage.type}`);
-      }
+      const serialized = MessageParser.serialize(message);
+      client.socket.send(serialized);
+      this.emit('message:sent', clientId, message);
+      return true;
     } catch (error) {
-      this.handleClientError(session, error);
+      this.emit('client:error', clientId, error as Error);
+      return false;
     }
   }
 
   /**
-   * Handle a handshake request from a client
+   * Send message to all connected clients
+   * @param message - Message to send
+   * @returns Number of clients that received the message
    */
-  private async handleHandshakeRequest(session: Session, message: MUPMessage): Promise<void> {
-    try {
-      this.sessionManager.emit('handshake_request', session, message);
-
-      // Check if authentication is required
-      if (this.config.auth.required) {
-        const credentials = message.payload?.auth;
-        if (!credentials) {
-          throw ErrorFactory.createAuthenticationError('Authentication required');
-        }
-
-        // Validate credentials if a validator is provided
-        if (this.config.auth.validator) {
-          const isValid = await this.config.auth.validator(credentials);
-          if (!isValid) {
-            throw ErrorFactory.createAuthenticationError('Invalid credentials');
-          }
-        }
+  broadcast(message: MUPMessage): number {
+    let sentCount = 0;
+    
+    for (const clientId of this.clients.keys()) {
+      if (this.sendToClient(clientId, message)) {
+        sentCount++;
       }
-
-      // Store client capabilities
-      session.setClientCapabilities(message.payload?.client_capabilities);
-
-      // Send handshake response
-      const response = this.messageBuilder.createHandshakeResponse({
-        success: true,
-        server_capabilities: this.config.capabilities as ServerCapabilities
-      });
-
-      await session.send(response);
-      session.setAuthenticated(true);
-
-      this.sessionManager.emit('handshake_complete', session);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      
-      // Send handshake failure response
-      const response = this.messageBuilder.createHandshakeResponse({
-        success: false,
-        error: errorMessage
-      });
-
-      await session.send(response);
-      this.sessionManager.emit('handshake_failed', session, errorMessage);
     }
+    
+    return sentCount;
   }
 
   /**
-   * Handle an event notification from a client
+   * Send UI response to client
+   * @param clientId - Client ID
+   * @param requestId - Original request ID
+   * @param response - Response data
+   * @returns True if response was sent
    */
-  private async handleEventNotification(session: Session, message: MUPMessage): Promise<void> {
-    if (!session.isAuthenticated()) {
-      throw ErrorFactory.createAuthenticationError('Not authenticated');
-    }
-
-    const eventPayload = message.payload as MUPEventNotification;
-    this.sessionManager.emit('client_event', session, eventPayload);
-  }
-
-  /**
-   * Handle a component availability query from a client
-   */
-  private async handleComponentAvailability(session: Session, message: MUPMessage): Promise<void> {
-    if (!session.isAuthenticated()) {
-      throw ErrorFactory.createAuthenticationError('Not authenticated');
-    }
-
-    // Respond with available components
-    const response = this.messageBuilder.createComponentAvailabilityResponse({
-      available_components: this.config.capabilities.supported_components
+  sendUIResponse(
+    clientId: string,
+    requestId: string,
+    response: Omit<UIResponse, 'id' | 'type' | 'timestamp'>
+  ): boolean {
+    const message = MessageBuilder.createUIResponse({
+      ...response,
+      requestId
     });
-
-    await session.send(response);
+    
+    return this.sendToClient(clientId, message);
   }
 
   /**
-   * Handle a server error
+   * Send error message to client
+   * @param clientId - Client ID
+   * @param error - Error information
+   * @param requestId - Optional request ID
+   * @returns True if error was sent
    */
-  private handleServerError(error: Error): void {
-    this.sessionManager.emit('error', error);
-  }
-
-  /**
-   * Handle a client error
-   */
-  private handleClientError(session: Session, error: unknown): void {
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-    this.sessionManager.emit('error', errorObj);
-
-    // Send error message to client
-    try {
-      const errorCode = (error as any).code || ErrorCodes.UNKNOWN_ERROR;
-      const errorMessage = this.messageBuilder.createErrorMessage({
-        code: errorCode,
-        message: errorObj.message,
-        recoverable: errorCode < 5000 // Consider errors with code < 5000 as recoverable
-      });
-
-      session.send(errorMessage).catch(sendError => {
-        this.sessionManager.emit('error', new Error(`Failed to send error message: ${sendError.message}`));
-      });
-    } catch (sendError) {
-      this.sessionManager.emit('error', new Error(`Failed to create error message: ${String(sendError)}`));
-    }
-  }
-
-  /**
-   * Start the ping interval to keep connections alive
-   */
-  private startPingInterval(): void {
-    this.stopPingInterval();
-
-    this.pingIntervalId = setInterval(() => {
-      this.sessionManager.getAllSessions().forEach(session => {
-        if (!session.isAlive()) {
-          session.disconnect('Ping timeout');
-          return;
-        }
-
-        session.ping();
-      });
-    }, this.config.pingInterval);
-  }
-
-  /**
-   * Stop the ping interval
-   */
-  private stopPingInterval(): void {
-    if (this.pingIntervalId) {
-      clearInterval(this.pingIntervalId);
-      this.pingIntervalId = undefined;
-    }
-  }
-
-  /**
-   * Send a component update to a specific client
-   */
-  async sendComponentUpdate(sessionId: string, component: MUPComponent): Promise<void> {
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    if (!session.isAuthenticated()) {
-      throw ErrorFactory.createAuthenticationError('Client not authenticated');
-    }
-
-    // Validate component
-    if (this.config.validateMessages && !this.validator.validateComponent(component)) {
-      throw ErrorFactory.createValidationError('Invalid component structure');
-    }
-
-    // Store component in component manager
-    this.componentManager.registerComponent(component, sessionId);
-
-    // Send component update
-    const message = this.messageBuilder.createComponentUpdate({
-      component
+  sendError(
+    clientId: string,
+    error: { code: string; message: string; details?: any },
+    requestId?: string
+  ): boolean {
+    const message = MessageBuilder.createError({
+      ...error,
+      requestId
     });
-
-    await session.send(message);
+    
+    return this.sendToClient(clientId, message);
   }
 
   /**
-   * Send a component update to all authenticated clients
+   * Register UI request handler
+   * @param action - Action name
+   * @param handler - Handler function
    */
-  async broadcastComponentUpdate(component: MUPComponent): Promise<void> {
-    // Validate component
-    if (this.config.validateMessages && !this.validator.validateComponent(component)) {
-      throw ErrorFactory.createValidationError('Invalid component structure');
-    }
-
-    // Store component in component manager for all sessions
-    this.sessionManager.getAllSessions().forEach(session => {
-      this.componentManager.registerComponent(component, session.id);
-    });
-
-    // Create component update message
-    const message = this.messageBuilder.createComponentUpdate({
-      component
-    });
-
-    // Send to all authenticated clients
-    const promises = this.sessionManager.getAllSessions()
-      .filter(session => session.isAuthenticated())
-      .map(session => session.send(message));
-
-    await Promise.all(promises);
+  onUIRequest(action: string, handler: RequestHandler): void {
+    this.requestHandlers.set(action, handler);
   }
 
   /**
-   * Send an error message to a specific client
+   * Register event handler
+   * @param eventType - Event type
+   * @param handler - Handler function
    */
-  async sendError(sessionId: string, code: number, message: string, recoverable = true): Promise<void> {
-    const session = this.sessionManager.getSession(sessionId);
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    const errorMessage = this.messageBuilder.createErrorMessage({
-      code,
-      message,
-      recoverable
-    });
-
-    await session.send(errorMessage);
+  onEvent(eventType: string, handler: EventHandler): void {
+    this.eventHandlers.set(eventType, handler);
   }
 
   /**
-   * Register a middleware
+   * Remove UI request handler
+   * @param action - Action name
    */
-  use(middleware: Middleware): void {
-    this.middlewareManager.use(middleware);
+  removeUIRequestHandler(action: string): void {
+    this.requestHandlers.delete(action);
   }
 
   /**
-   * Register an event listener
+   * Remove event handler
+   * @param eventType - Event type
    */
-  on<K extends keyof MUPServerEvents>(event: K, listener: MUPServerEvents[K]): void {
-    this.sessionManager.on(event, listener);
+  removeEventHandler(eventType: string): void {
+    this.eventHandlers.delete(eventType);
   }
 
   /**
-   * Remove an event listener
+   * Get connected client
+   * @param clientId - Client ID
+   * @returns Client connection or undefined
    */
-  off<K extends keyof MUPServerEvents>(event: K, listener: MUPServerEvents[K]): void {
-    this.sessionManager.off(event, listener);
+  getClient(clientId: string): ClientConnection | undefined {
+    return this.clients.get(clientId);
   }
 
   /**
-   * Register a one-time event listener
+   * Get all connected clients
+   * @returns Array of client connections
    */
-  once<K extends keyof MUPServerEvents>(event: K, listener: MUPServerEvents[K]): void {
-    this.sessionManager.once(event, listener);
+  getClients(): ClientConnection[] {
+    return Array.from(this.clients.values());
   }
 
   /**
-   * Get the component manager
+   * Get number of connected clients
+   * @returns Number of clients
    */
-  getComponentManager(): ComponentManager {
-    return this.componentManager;
+  getClientCount(): number {
+    return this.clients.size;
   }
 
   /**
-   * Get the session manager
+   * Check if server is running
+   * @returns True if server is running
    */
-  getSessionManager(): SessionManager {
-    return this.sessionManager;
-  }
-
-  /**
-   * Get server capabilities
-   */
-  getCapabilities(): ServerCapabilities {
-    return this.config.capabilities as ServerCapabilities;
-  }
-
-  /**
-   * Check if the server is running
-   */
-  isStarted(): boolean {
+  isServerRunning(): boolean {
     return this.isRunning;
   }
 
   /**
-   * Get the server address
+   * Disconnect client
+   * @param clientId - Client ID
+   * @param reason - Disconnect reason
    */
-  getAddress(): { host: string; port: number; path: string } {
-    return {
-      host: this.config.host,
-      port: this.config.port,
-      path: this.config.path
+  disconnectClient(clientId: string, reason = 'Server disconnect'): void {
+    const client = this.clients.get(clientId);
+    if (client) {
+      client.socket.close(1000, reason);
+    }
+  }
+
+  /**
+   * Handle new WebSocket connection
+   * @param socket - WebSocket instance
+   */
+  private handleConnection(socket: WebSocket): void {
+    // Check connection limit
+    if (this.clients.size >= this.config.maxConnections) {
+      socket.close(1013, 'Server at capacity');
+      return;
+    }
+
+    // Create client connection
+    const clientId = uuidv4();
+    const client: ClientConnection = {
+      id: clientId,
+      socket,
+      isAlive: true,
+      lastSeen: Date.now()
     };
+
+    this.clients.set(clientId, client);
+    this.emit('client:connect', client);
+
+    // Set up socket event handlers
+    socket.on('message', (data) => {
+      this.handleMessage(clientId, data);
+    });
+
+    socket.on('close', (code, reason) => {
+      this.handleDisconnect(clientId, `${code}: ${reason}`);
+    });
+
+    socket.on('error', (error) => {
+      this.emit('client:error', clientId, error);
+    });
+
+    socket.on('pong', () => {
+      client.isAlive = true;
+      client.lastSeen = Date.now();
+    });
+  }
+
+  /**
+   * Handle incoming message from client
+   * @param clientId - Client ID
+   * @param data - Raw message data
+   */
+  private async handleMessage(clientId: string, data: any): Promise<void> {
+    try {
+      // Parse message
+      const message = MessageParser.parse(data.toString());
+      
+      // Validate message if enabled
+      if (this.config.enableValidation) {
+        const validation = this.validator.validateMessage(message);
+        if (!validation.isValid) {
+          this.sendError(clientId, {
+            code: 'VALIDATION_ERROR',
+            message: 'Invalid message format',
+            details: validation.errors
+          });
+          return;
+        }
+      }
+
+      this.emit('message:received', clientId, message);
+
+      // Handle different message types
+      switch (message.type) {
+        case MessageType.UI_REQUEST:
+          await this.handleUIRequest(clientId, message as UIRequest);
+          break;
+          
+        case MessageType.EVENT_TRIGGER:
+          await this.handleEventTrigger(clientId, message as EventTrigger);
+          break;
+          
+        default:
+          this.sendError(clientId, {
+            code: 'UNSUPPORTED_MESSAGE_TYPE',
+            message: `Unsupported message type: ${message.type}`
+          });
+      }
+      
+    } catch (error) {
+      this.emit('client:error', clientId, error as Error);
+      this.sendError(clientId, {
+        code: 'MESSAGE_PARSE_ERROR',
+        message: 'Failed to parse message',
+        details: (error as Error).message
+      });
+    }
+  }
+
+  /**
+   * Handle UI request from client
+   * @param clientId - Client ID
+   * @param request - UI request
+   */
+  private async handleUIRequest(clientId: string, request: UIRequest): Promise<void> {
+    this.emit('ui:request', clientId, request);
+    
+    const handler = this.requestHandlers.get(request.payload.action);
+    if (!handler) {
+      this.sendError(clientId, {
+        code: 'NO_HANDLER',
+        message: `No handler registered for action: ${request.payload.action}`
+      }, request.id);
+      return;
+    }
+
+    try {
+      const response = await handler(clientId, request);
+      this.sendToClient(clientId, response);
+    } catch (error) {
+      this.sendError(clientId, {
+        code: 'HANDLER_ERROR',
+        message: 'Request handler failed',
+        details: (error as Error).message
+      }, request.id);
+    }
+  }
+
+  /**
+   * Handle event trigger from client
+   * @param clientId - Client ID
+   * @param event - Event trigger
+   */
+  private async handleEventTrigger(clientId: string, event: EventTrigger): Promise<void> {
+    this.emit('event:trigger', clientId, event);
+    
+    const handler = this.eventHandlers.get(event.payload.eventType);
+    if (!handler) {
+      // Events don't require responses, so we just ignore unknown events
+      return;
+    }
+
+    try {
+      await handler(clientId, event);
+    } catch (error) {
+      this.emit('client:error', clientId, error as Error);
+    }
+  }
+
+  /**
+   * Handle client disconnect
+   * @param clientId - Client ID
+   * @param reason - Disconnect reason
+   */
+  private handleDisconnect(clientId: string, reason: string): void {
+    this.clients.delete(clientId);
+    this.emit('client:disconnect', clientId, reason);
+  }
+
+  /**
+   * Start ping interval to check client connections
+   */
+  private startPingInterval(): void {
+    this.pingInterval = setInterval(() => {
+      for (const [clientId, client] of this.clients.entries()) {
+        if (!client.isAlive) {
+          // Client didn't respond to ping, disconnect
+          client.socket.terminate();
+          this.handleDisconnect(clientId, 'Ping timeout');
+        } else {
+          // Send ping and mark as not alive
+          client.isAlive = false;
+          client.socket.ping();
+        }
+      }
+    }, this.config.pingInterval);
   }
 }

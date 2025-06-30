@@ -33,7 +33,7 @@ mup validate schema.json
 mup serve --port 3000
 ```
 
-#### 2. 开发者工具
+#### 2. 开发者工具(暂不支持)
 - VS Code扩展（语法高亮、自动补全）
 - JSON Schema验证器
 - 组件预览工具
