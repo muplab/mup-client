@@ -22,7 +22,12 @@
     "install:all": "npm install && lerna bootstrap",
     "version:patch": "lerna version patch",
     "version:minor": "lerna version minor",
-    "version:major": "lerna version major"
+    "version:major": "lerna version major",
+    "publish": "./scripts/publish.sh",
+    "publish:quick": "./scripts/publish-quick.sh",
+    "publish:patch": "npx lerna version patch --yes && npx lerna publish from-git --yes",
+    "publish:minor": "npx lerna version minor --yes && npx lerna publish from-git --yes",
+    "publish:major": "npx lerna version major --yes && npx lerna publish from-git --yes"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.0",
