@@ -18,7 +18,6 @@
     "lint:fix": "eslint packages/*/src/**/*.ts --fix",
     "clean": "lerna run clean",
     "bootstrap": "lerna bootstrap",
-    "publish": "lerna publish",
     "dev": "lerna run dev --parallel",
     "install:all": "npm install && lerna bootstrap",
     "version:patch": "lerna version patch",

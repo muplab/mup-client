@@ -55,5 +55,6 @@
   "homepage": "https://github.com/muprotocol/mup-sdk#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "gitHead": "298a6f6dbba8199b7e40a504b429d50fa83dae90"
 }

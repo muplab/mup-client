@@ -28,16 +28,16 @@
   "author": "MUP Protocol Team",
   "license": "MIT",
   "dependencies": {
-    "@muprotocol/types": "^0.3.0",
     "@muprotocol/core": "^0.3.0",
-    "ws": "^8.14.0",
+    "@muprotocol/types": "^0.3.0",
+    "eventemitter3": "^5.0.0",
     "uuid": "^9.0.0",
-    "eventemitter3": "^5.0.0"
+    "ws": "^8.14.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.5.0",
-    "@types/uuid": "^9.0.0",
     "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "@types/ws": "^8.5.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "eslint": "^8.0.0",
@@ -51,5 +51,6 @@
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "gitHead": "298a6f6dbba8199b7e40a504b429d50fa83dae90"
 }

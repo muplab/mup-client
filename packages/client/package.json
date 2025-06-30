@@ -19,8 +19,8 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@muprotocol/types": "^0.3.0",
     "@muprotocol/core": "^0.3.0",
+    "@muprotocol/types": "^0.3.0",
     "eventemitter3": "^5.0.0"
   },
   "devDependencies": {
@@ -56,5 +56,6 @@
   "homepage": "https://github.com/muprotocol/mup-sdk#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "gitHead": "298a6f6dbba8199b7e40a504b429d50fa83dae90"
 }
