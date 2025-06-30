@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.1.3](https://github.com/muplab/mup-sdk/compare/v0.1.2...v0.1.3) (2025-06-30)
+
+
+### Bug Fixes
+
+* resolve TypeScript errors and add publish scripts ([370e543](https://github.com/muplab/mup-sdk/commit/370e543dbdc8c664a7e254466b421154a6166454))
+
+
+
+
+
 ## 0.1.2 (2025-06-29)
 
 **Note:** Version bump only for package mup-sdk
