@@ -1,6 +1,6 @@
 {
   "name": "@muprotocol/client",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Client library for MUP protocol v1",
   "main": "dist/index.js",
   "module": "dist/index.esm.js",
@@ -19,8 +19,8 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "@muprotocol/core": "^0.1.3",
-    "@muprotocol/types": "^0.1.3",
+    "@muprotocol/core": "^0.1.4",
+    "@muprotocol/types": "^0.1.4",
     "eventemitter3": "^5.0.0"
   },
   "devDependencies": {
