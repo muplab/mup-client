@@ -60,5 +60,6 @@
   "homepage": "https://github.com/muplab/mup-sdk/tree/main/packages/cli#readme",
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "gitHead": "ee59d6979e728828161e208c62d4145b075addad"
 }

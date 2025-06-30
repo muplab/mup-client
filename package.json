@@ -23,7 +23,7 @@
     "version:patch": "lerna version patch",
     "version:minor": "lerna version minor",
     "version:major": "lerna version major",
-    "publish": "./scripts/publish.sh",
+    "release": "./scripts/publish.sh",
     "publish:quick": "./scripts/publish-quick.sh",
     "publish:patch": "npx lerna version patch --yes && npx lerna publish from-git --yes",
     "publish:minor": "npx lerna version minor --yes && npx lerna publish from-git --yes",
