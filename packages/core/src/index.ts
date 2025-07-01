@@ -21,6 +21,37 @@ export {
   MessageProcessor
 } from './message-queue';
 
+// Export AI-driven UI generation modules
+export {
+  DecisionEngine,
+  UIGenerationResult,
+  IntentAnalysis,
+  ComponentSelection,
+  LayoutStructure,
+  StyleDecisions
+} from './ai-decision-engine';
+
+export {
+  QualityValidator,
+  ValidationResult,
+  QualityAssessment,
+  AccessibilityMetrics,
+  UsabilityMetrics,
+  PerformanceMetrics,
+  ConsistencyMetrics,
+  ImprovementSuggestion
+} from './quality-validator';
+
+export {
+  PromptEngineeringSystem,
+  PromptTemplate,
+  ContextEnhancement,
+  GeneratedPrompt,
+  UserContextData,
+  DomainKnowledge,
+  DesignPatternLibrary
+} from './prompt-engineering';
+
 // Export validation utilities
 export {
   ValidationError,

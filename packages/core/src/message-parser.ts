@@ -43,7 +43,7 @@ export class MessageParser {
   /**
    * Serialize a MUP message to JSON string
    * @param message - MUP message to serialize
-   * @returns JSON string representation
+   * @returns JSON string
    */
   static serialize(message: UIRequest | UIResponse | EventTrigger | ErrorMessage): string {
     try {

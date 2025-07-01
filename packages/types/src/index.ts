@@ -20,6 +20,7 @@ export type {
   UIResponse,
   EventTrigger,
   ErrorMessage,
+
   Component,
   ComponentType
 } from './protocol';

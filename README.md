@@ -20,11 +20,13 @@ This is a monorepo containing four main packages:
 - 🚀 **Full TypeScript Support** - Complete type definitions and IntelliSense
 - 🔄 **Real-time Communication** - WebSocket-based bidirectional messaging
 - 🎨 **Dynamic UI Components** - Flexible component system with rendering support
+- 🤖 **AI-Powered UI Generation** - Intelligent interface creation based on user intent
 - 🛡️ **Built-in Validation** - Message and component validation
 - 📦 **Modular Architecture** - Separate packages for different use cases
 - 🔧 **Extensible** - Plugin system and custom renderers
 - 📊 **State Management** - Built-in state management with persistence
 - 🔐 **Session Management** - Secure session handling with TTL support
+- 🧠 **Smart Refinement** - AI-driven interface optimization based on user feedback
 
 ### Core Features
 - ✅ WebSocket-based communication
@@ -36,6 +38,9 @@ This is a monorepo containing four main packages:
 - ✅ Authentication and authorization
 - ✅ Error handling and recovery
 - ✅ Connection management with auto-reconnect
+- ✅ AI message types and processing
+- ✅ Intent-based UI generation
+- ✅ Smart component optimization
 
 ### Client Features
 - ✅ Automatic connection management
