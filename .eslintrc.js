@@ -37,6 +37,8 @@ module.exports = {
     'object-shorthand': 'warn',
     'prefer-arrow-callback': 'warn',
     'prefer-template': 'warn',
+    'no-useless-escape': 'off',
+    'no-prototype-builtins': 'off',
     
     // Code style
     'indent': 'off',
