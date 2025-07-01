@@ -141,21 +141,21 @@ export function validateMessage(message: any): ValidationResult {
     
     // Type-specific validations
     switch (message.type) {
-      case 'handshake_request':
-        validateHandshakeRequest(message, result);
-        break;
-      case 'handshake_response':
-        validateHandshakeResponse(message, result);
-        break;
-      case 'component_update':
-        validateComponentUpdate(message, result);
-        break;
-      case 'user_action':
-        validateUserAction(message, result);
-        break;
-      case 'error':
-        validateErrorMessage(message, result);
-        break;
+    case 'handshake_request':
+      validateHandshakeRequest(message, result);
+      break;
+    case 'handshake_response':
+      validateHandshakeResponse(message, result);
+      break;
+    case 'component_update':
+      validateComponentUpdate(message, result);
+      break;
+    case 'user_action':
+      validateUserAction(message, result);
+      break;
+    case 'error':
+      validateErrorMessage(message, result);
+      break;
     }
   } else {
     result.errors = validateMessageSchema.errors?.map(error => {
@@ -257,21 +257,21 @@ function validateErrorMessage(message: any, result: ValidationResult): void {
 function validateComponentProps(component: any, result: ValidationResult): void {
   // Type-specific prop validation
   switch (component.type) {
-    case 'button':
-      if (component.props?.onClick && typeof component.props.onClick !== 'string') {
-        result.errors.push('Button onClick prop must be a string');
-      }
-      break;
-    case 'input':
-      if (component.props?.type && !['text', 'email', 'password', 'number'].includes(component.props.type)) {
+  case 'button':
+    if (component.props?.onClick && typeof component.props.onClick !== 'string') {
+      result.errors.push('Button onClick prop must be a string');
+    }
+    break;
+  case 'input':
+    if (component.props?.type && !['text', 'email', 'password', 'number'].includes(component.props.type)) {
         result.warnings!.push('Input type should be one of: text, email, password, number');
-      }
-      break;
-    case 'image':
-      if (!component.props?.src) {
-        result.errors.push('Image component must have src prop');
-      }
-      break;
+    }
+    break;
+  case 'image':
+    if (!component.props?.src) {
+      result.errors.push('Image component must have src prop');
+    }
+    break;
   }
 }
 

@@ -1,10 +1,10 @@
-import { createServer, Server } from 'http';
-import { WebSocketServer, WebSocket } from 'ws';
-import { readFileSync, existsSync, watchFile } from 'fs';
-import { join, extname } from 'path';
+import { Server, createServer } from 'http';
+import { WebSocket, WebSocketServer } from 'ws';
+import { existsSync, readFileSync, watchFile } from 'fs';
+import { extname, join } from 'path';
 import { URL } from 'url';
-import { logger, createProgress } from '../utils/logger';
-import { MUPMessage, Component } from '@muprotocol/types';
+import { createProgress, logger } from '../utils/logger';
+import { Component, MUPMessage } from '@muprotocol/types';
 
 export interface ServerConfig {
   port: number;
@@ -160,7 +160,7 @@ export class MupDevServer {
     connections: number;
     uptime: number;
     config: ServerConfig;
-  } {
+    } {
     return {
       running: this.isRunning,
       connections: this.connections.size,
@@ -269,17 +269,17 @@ export class MupDevServer {
     logger.debug(`Received message from ${clientId}:`, message.type);
 
     switch (message.type) {
-      case 'handshake_request':
-        this.handleHandshake(clientId, message);
-        break;
-      case 'user_action':
-        this.handleUserAction(clientId, message);
-        break;
-      case 'ping':
-        this.handlePing(clientId, message);
-        break;
-      default:
-        logger.warn(`Unknown message type from ${clientId}:`, message.type);
+    case 'handshake_request':
+      this.handleHandshake(clientId, message);
+      break;
+    case 'user_action':
+      this.handleUserAction(clientId, message);
+      break;
+    case 'ping':
+      this.handlePing(clientId, message);
+      break;
+    default:
+      logger.warn(`Unknown message type from ${clientId}:`, message.type);
     }
   }
 
@@ -404,7 +404,7 @@ export class MupDevServer {
     
     if (!existsSync(filePath)) {
       // Try with .html extension
-      const htmlPath = filePath + '.html';
+      const htmlPath = `${filePath  }.html`;
       if (existsSync(htmlPath)) {
         filePath = htmlPath;
       } else {

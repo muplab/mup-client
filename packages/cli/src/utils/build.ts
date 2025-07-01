@@ -1,6 +1,6 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { formatFileSize, formatDuration } from './index';
+import { formatDuration, formatFileSize } from './index';
 
 export interface BuildOptions {
   outputDir: string;

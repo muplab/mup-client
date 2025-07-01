@@ -77,7 +77,7 @@ function isObject(value: any): value is Record<string, any> {
 /**
  * Debounce function
  */
-export function debounce<T extends (...args: any[]) => any>(
+export function debounce<T extends(...args: any[]) => any>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {

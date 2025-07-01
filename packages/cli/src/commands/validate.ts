@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import * as fs from 'fs-extra';
 import * as path from 'path';
-import { validateMessage, validateComponent } from '../validator';
+import { validateComponent, validateMessage } from '../validator';
 
 export const validateCommand = new Command('validate')
   .description('Validate MUP protocol messages and components')
@@ -37,16 +37,16 @@ export const validateCommand = new Command('validate')
 
       let result;
       switch (options.type) {
-        case 'message':
-          result = validateMessage(data);
-          break;
-        case 'component':
-          result = validateComponent(data);
-          break;
-        default:
-          console.error(chalk.red(`Error: Unknown validation type: ${options.type}`));
-          console.log(chalk.gray('Supported types: message, component'));
-          process.exit(1);
+      case 'message':
+        result = validateMessage(data);
+        break;
+      case 'component':
+        result = validateComponent(data);
+        break;
+      default:
+        console.error(chalk.red(`Error: Unknown validation type: ${options.type}`));
+        console.log(chalk.gray('Supported types: message, component'));
+        process.exit(1);
       }
 
       if (result.valid) {
