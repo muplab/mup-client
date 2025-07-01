@@ -95,7 +95,6 @@ npm run clean
 # 2. 安装依赖
 log_info "安装依赖..."
 npm install
-npx lerna bootstrap
 
 # 3. 运行 linting
 log_info "运行代码检查..."
